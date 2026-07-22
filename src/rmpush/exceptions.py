@@ -14,10 +14,6 @@ class TokenRefreshError(RmpushError):
     """Raised when exchanging a device token for a user token fails."""
 
 
-class SyncConflictError(RmpushError):
-    """Raised when the sync root changed concurrently and retries were exhausted."""
-
-
 class SyncProtocolError(RmpushError):
     """Raised when the cloud responds in a way this client doesn't understand.
 

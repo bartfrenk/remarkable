@@ -31,12 +31,12 @@ from .exceptions import NotRegisteredError, RegistrationError, TokenRefreshError
 
 logger = logging.getLogger("rmpush.auth")
 
-AUTH_BASE = "https://webapp-production-dot-remarkable-production.appspot.com"
+AUTH_BASE = "https://webapp-prod.cloud.remarkable.engineering"
 DEVICE_TOKEN_URL = f"{AUTH_BASE}/token/json/2/device/new"
 USER_TOKEN_URL = f"{AUTH_BASE}/token/json/2/user/new"
 
 # Must be one of the values the reMarkable backend recognizes.
-DEVICE_DESC = "desktop-linux"
+DEVICE_DESC = "browser-chrome"
 
 DEFAULT_CREDENTIALS_PATH = Path.home() / ".config" / "rmpush" / "credentials.json"
 
@@ -113,6 +113,7 @@ class Auth:
         logger.info("Registering new device with reMarkable cloud")
         resp = self.session.post(
             DEVICE_TOKEN_URL,
+            headers={"Authorization": "Bearer"},
             json={
                 "code": one_time_code,
                 "deviceDesc": DEVICE_DESC,
@@ -128,7 +129,9 @@ class Auth:
             device_token=resp.text.strip(), device_id=device_id, user_token=None
         )
         self.credentials.save(self.credentials_path)
-        logger.info("Device registered and credentials saved to %s", self.credentials_path)
+        logger.info(
+            "Device registered and credentials saved to %s", self.credentials_path
+        )
         return self.credentials.device_token
 
     def get_user_token(self, force_refresh: bool = False) -> str:
@@ -158,15 +161,3 @@ class Auth:
         self.credentials.user_token = resp.text.strip()
         self.credentials.save(self.credentials_path)
         return self.credentials.user_token
-
-    def user_id_claim(self) -> Optional[str]:
-        """Best-effort extraction of the account identifier embedded in the user token.
-
-        Used only as an input to the sync-host discovery call; the reMarkable
-        backend appears to accept a range of values here.
-        """
-        token = self.credentials.user_token
-        if not token:
-            return None
-        claims = _decode_jwt_payload(token)
-        return claims.get("sub") or claims.get("u") or claims.get("user_id")

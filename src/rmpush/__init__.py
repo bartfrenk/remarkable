@@ -3,7 +3,6 @@ from .exceptions import (
     NotRegisteredError,
     RegistrationError,
     RmpushError,
-    SyncConflictError,
     SyncProtocolError,
     TokenRefreshError,
 )
@@ -14,6 +13,5 @@ __all__ = [
     "NotRegisteredError",
     "RegistrationError",
     "TokenRefreshError",
-    "SyncConflictError",
     "SyncProtocolError",
 ]
