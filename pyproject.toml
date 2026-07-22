@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rmpush"
+version = "0.1.0"
+description = "Push PDF documents to a reMarkable tablet via the reMarkable Cloud API"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "requests>=2.28",
+    "pypdf>=3.0",
+]
+
+[project.scripts]
+rmpush = "rmpush.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
