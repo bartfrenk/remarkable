@@ -55,24 +55,48 @@ rmpush push a.pdf b.pdf c.pdf
 from rmpush import RemarkableClient
 
 client = RemarkableClient()
-doc_id = client.push_pdf("report.pdf", visible_name="Q3 Report")
+doc_id = client.push_pdf("report.pdf", name="Q3 Report")
 ```
 
 Documents are uploaded to the root of your reMarkable file tree.
+
+## Download a document
+
+```bash
+rmpush download "/Notes/MyDoc"
+rmpush download "/Notes/MyDoc" -o mydoc.pdf
+```
+
+```python
+from rmpush import RemarkableClient
+
+client = RemarkableClient()
+path = client.download("/Notes/MyDoc")
+```
+
+Paths are resolved against `visibleName`/folder structure, e.g.
+`/Folder/Subfolder/MyDoc`. Only documents uploaded as PDF or EPUB can be
+downloaded this way — native reMarkable notebooks (handwritten pages) are
+stored as a multi-file archive and aren't supported.
+
+Downloading walks reMarkable's content-addressed sync protocol (root hash →
+per-document index → content blob) rather than a single endpoint, since the
+cloud API has no one-shot "download by id" call — see `rmpush/sync.py`.
 
 ## If it doesn't work
 
 Run with `-v` (CLI) or configure `logging.basicConfig(level=logging.DEBUG)`
 (library) to see each HTTP call. If you get a 404/host-not-found, reMarkable
-has likely moved its endpoints again — check `rmpush/auth.py` (`AUTH_BASE`)
-and `rmpush/upload.py` (`UPLOAD_HOST`) against the current `rmapi-js` source
-for the new hosts, or file an issue against this repo.
+has likely moved its endpoints again — check `rmpush/auth.py` (`AUTH_BASE`),
+`rmpush/client.py` (`UPLOAD_HOST`), and `rmpush/sync.py` (`RAW_HOST`) against
+the current `rmapi-js` source for the new hosts, or file an issue against
+this repo.
 
 ## Layout
 
 - `rmpush/auth.py` — device pairing, user token refresh/caching
-- `rmpush/upload.py` — the one-shot PDF/EPUB upload endpoint
-- `rmpush/client.py` — high-level `RemarkableClient.push_pdf(...)`
+- `rmpush/sync.py` — low-level reads against the content-addressed sync protocol
+- `rmpush/client.py` — high-level `RemarkableClient` (`push_pdf`, `download`, ...)
 - `rmpush/__main__.py` — `rmpush` CLI
 
 ## Tests

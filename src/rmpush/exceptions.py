@@ -23,3 +23,7 @@ class SyncProtocolError(RmpushError):
     shape before. If you hit this, the cloud API has likely drifted from what
     this library expects.
     """
+
+
+class DocumentNotFoundError(RmpushError):
+    """Raised when a requested path doesn't resolve to a downloadable document."""

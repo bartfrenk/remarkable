@@ -4,7 +4,7 @@ import json
 import requests
 import responses
 
-from rmpush.upload import UPLOAD_URL, upload_file
+from rmpush.client import UPLOAD_URL, Document, upload_file
 
 
 @responses.activate
@@ -17,7 +17,8 @@ def test_upload_file_sends_expected_request_and_parses_doc_id():
     )
 
     session = requests.Session()
-    doc_id = upload_file(session, "usertoken", "My Doc", b"%PDF-1.4 ...", "application/pdf")
+    doc = Document("My Doc", b"%PDF-1.4 ...", "application/pdf")
+    doc_id = upload_file(session, "usertoken", doc)
 
     assert doc_id == "abc-123"
     sent = responses.calls[0].request
