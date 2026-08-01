@@ -1,54 +1,74 @@
 from __future__ import annotations
 
+import json
 import logging
+from base64 import b64encode
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Union
+from typing import Literal, final
 
 import requests
 
-from .auth import DEFAULT_CREDENTIALS_PATH, Auth
-from .upload import upload_file
+from rmpush.auth import DEFAULT_CREDENTIALS_PATH, Auth
+from rmpush.exceptions import SyncProtocolError
 
-logger = logging.getLogger("rmpush.client")
+log = logging.getLogger(__name__)
 
 
+MimeType = Literal["application/pdf", "application/epub+zip"]
+
+UPLOAD_HOST = "https://internal.cloud.remarkable.com"
+UPLOAD_URL = f"{UPLOAD_HOST}/doc/v2/files"
+
+
+@dataclass(frozen=True, slots=True)
+class Document:
+    name: str
+    data: bytes
+    mime_type: MimeType
+
+
+@final
 class RemarkableClient:
-    """High-level entry point: register once, then push PDFs.
-
-    Example:
-        client = RemarkableClient()
-        client.register("abcdwxyz")          # one-time pairing, see README
-        client.push_pdf("report.pdf")
-    """
 
     def __init__(
         self,
-        credentials_path: Union[str, Path] = DEFAULT_CREDENTIALS_PATH,
-        session: Optional[requests.Session] = None,
+        credentials_path: str | Path = DEFAULT_CREDENTIALS_PATH,
+        session: requests.Session | None = None,
     ):
         self.session = session or requests.Session()
         self.auth = Auth(credentials_path=Path(credentials_path), session=self.session)
 
-    def register(self, one_time_code: str) -> None:
-        """Pair this library with your reMarkable account.
+    def register(self, otp: str) -> None:
+        self.auth.register(otp)
 
-        Get a one-time code from https://my.remarkable.com/device/browser/connect
-        Only needs to be done once; credentials are cached on disk afterwards.
-        """
-        self.auth.register(one_time_code)
-
-    def push_pdf(self, path: Union[str, Path], visible_name: Optional[str] = None) -> str:
-        """Upload a local PDF file to the root of the reMarkable file tree.
-
-        Returns the new document's UUID on success.
-        """
+    def push_pdf(self, path: str | Path, name: str | None = None) -> str:
         path = Path(path)
-        pdf_bytes = path.read_bytes()
-        name = visible_name or path.stem
-        return self.push_pdf_bytes(pdf_bytes, name)
+        doc = Document(name or path.stem, path.read_bytes(), "application/pdf")
+        return self.push_document(doc)
 
-    def push_pdf_bytes(self, pdf_bytes: bytes, visible_name: str) -> str:
+    def push_document(self, doc: Document) -> str:
         user_token = self.auth.get_user_token()
-        doc_id = upload_file(self.session, user_token, visible_name, pdf_bytes, "application/pdf")
-        logger.info("Uploaded %r as document %s", visible_name, doc_id)
+        doc_id = upload_file(self.session, user_token, doc)
+        log.info("Uploaded %r as document %s", doc.name, doc_id)
         return doc_id
+
+
+def upload_file(session: requests.Session, user_token: str, doc: Document) -> str:
+    meta = b64encode(json.dumps({"file_name": doc.name}).encode("utf-8")).decode("ascii")
+    headers = {
+        "Authorization": f"Bearer {user_token}",
+        "Content-Type": doc.mime_type,
+        "rm-meta": meta,
+        "rm-source": "RoR-Browser",
+    }
+
+    resp = session.post(UPLOAD_URL, headers=headers, data=doc.data)
+    if resp.status_code not in (200, 201):
+        raise SyncProtocolError(f"Upload failed ({resp.status_code}): {resp.text[:300]}")
+
+    try:
+        body = resp.json()
+        return body["docID"]
+    except (ValueError, KeyError) as exc:
+        raise SyncProtocolError(f"Unexpected upload response shape: {resp.text[:300]}") from exc

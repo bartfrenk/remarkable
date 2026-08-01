@@ -23,79 +23,63 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Self, cast, final
+from pydantic import BaseModel
 
 import requests
 
 from .exceptions import NotRegisteredError, RegistrationError, TokenRefreshError
 
-logger = logging.getLogger("rmpush.auth")
+log = logging.getLogger(__name__)
 
 AUTH_BASE = "https://webapp-prod.cloud.remarkable.engineering"
 DEVICE_TOKEN_URL = f"{AUTH_BASE}/token/json/2/device/new"
 USER_TOKEN_URL = f"{AUTH_BASE}/token/json/2/user/new"
-
-# Must be one of the values the reMarkable backend recognizes.
 DEVICE_DESC = "browser-chrome"
-
 DEFAULT_CREDENTIALS_PATH = Path.home() / ".config" / "rmpush" / "credentials.json"
-
-# Refresh the user token this many seconds before it actually expires.
 _EXPIRY_SAFETY_MARGIN_SECONDS = 60
 
 
-def _decode_jwt_payload(token: str) -> dict:
-    """Best-effort, unverified decode of a JWT payload (we trust our own token)."""
+class Claims(BaseModel):
+    exp: int
+
+
+class Credentials(BaseModel):
+    device_token: str | None = None
+    device_id: str | None = None
+    user_token: str | None = None
+
+    @classmethod
+    def load(cls, path: Path) -> Self:
+        if not path.exists():
+            return cls()
+        data = cast(dict[str, str], json.loads(path.read_text()))
+        return cls(**data)
+
+    def save(self, path: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(self.model_dump_json(indent=2))
+        path.chmod(0o600)
+
+
+def _decode_jwt_payload(token: str) -> Claims | None:
     try:
         payload_b64 = token.split(".")[1]
         padding = "=" * (-len(payload_b64) % 4)
         payload = base64.urlsafe_b64decode(payload_b64 + padding)
-        return json.loads(payload)
+        return Claims.model_validate_json(payload)
     except Exception:
-        return {}
+        return None
 
 
-@dataclass
-class Credentials:
-    device_token: Optional[str] = None
-    device_id: Optional[str] = None
-    user_token: Optional[str] = None
-
-    @classmethod
-    def load(cls, path: Path) -> "Credentials":
-        if not path.exists():
-            return cls()
-        data = json.loads(path.read_text())
-        return cls(
-            device_token=data.get("device_token"),
-            device_id=data.get("device_id"),
-            user_token=data.get("user_token"),
-        )
-
-    def save(self, path: Path) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            json.dumps(
-                {
-                    "device_token": self.device_token,
-                    "device_id": self.device_id,
-                    "user_token": self.user_token,
-                },
-                indent=2,
-            )
-        )
-        path.chmod(0o600)
-
-
+@final
 class Auth:
-    """Handles device registration and user token refresh, with on-disk caching."""
-
     def __init__(
         self,
         credentials_path: Path = DEFAULT_CREDENTIALS_PATH,
-        session: Optional[requests.Session] = None,
+        session: requests.Session | None = None,
     ):
-        self.credentials_path = Path(credentials_path)
+        self.credentials_path: Path = Path(credentials_path)
         self.session = session or requests.Session()
         self.credentials = Credentials.load(self.credentials_path)
 
@@ -104,13 +88,8 @@ class Auth:
         return bool(self.credentials.device_token)
 
     def register(self, one_time_code: str) -> str:
-        """Exchange a one-time pairing code for a device token and persist it.
-
-        Get a code from https://my.remarkable.com/device/browser/connect
-        (valid for a few minutes, single use).
-        """
         device_id = str(uuid.uuid4())
-        logger.info("Registering new device with reMarkable cloud")
+        log.info("Registering new device with")
         resp = self.session.post(
             DEVICE_TOKEN_URL,
             headers={"Authorization": "Bearer"},
@@ -129,26 +108,19 @@ class Auth:
             device_token=resp.text.strip(), device_id=device_id, user_token=None
         )
         self.credentials.save(self.credentials_path)
-        logger.info(
-            "Device registered and credentials saved to %s", self.credentials_path
-        )
-        return self.credentials.device_token
+        log.info("Device registered and credentials saved to %s", self.credentials_path)
+        return cast(str, self.credentials.device_token)
 
-    def get_user_token(self, force_refresh: bool = False) -> str:
-        """Return a valid (non-expired) user token, refreshing it if needed."""
+    def get_user_token(self, force: bool = False) -> str:
         if not self.credentials.device_token:
-            raise NotRegisteredError(
-                "No device token found. Call Auth.register(one_time_code) first, "
-                "using a code from https://my.remarkable.com/device/browser/connect"
-            )
+            raise NotRegisteredError()
 
-        if not force_refresh and self.credentials.user_token:
-            claims = _decode_jwt_payload(self.credentials.user_token)
-            exp = claims.get("exp")
-            if exp is None or time.time() < exp - _EXPIRY_SAFETY_MARGIN_SECONDS:
-                return self.credentials.user_token
+        if not force and self.credentials.user_token:
+            if claims := _decode_jwt_payload(self.credentials.user_token):
+                if time.time() < claims.exp - _EXPIRY_SAFETY_MARGIN_SECONDS:
+                    return self.credentials.user_token
 
-        logger.info("Refreshing user token")
+        log.info("Refreshing user token")
         resp = self.session.post(
             USER_TOKEN_URL,
             headers={"Authorization": f"Bearer {self.credentials.device_token}"},

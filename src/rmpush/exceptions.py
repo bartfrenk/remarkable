@@ -2,6 +2,8 @@ class RmpushError(Exception):
     """Base class for all rmpush errors."""
 
 
+# "No device token found. Call Auth.register(one_time_code) first, "
+# "using a code from https://my.remarkable.com/device/browser/connect"
 class NotRegisteredError(RmpushError):
     """Raised when an operation needs a device token but none is stored yet."""
 
