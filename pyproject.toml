@@ -33,3 +33,4 @@ line_length = 99
 [tool.pyright]
 reportUnusedCallResult = false
 reportAny = false
+reportImplicitStringConcatenation = false
