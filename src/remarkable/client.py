@@ -100,7 +100,7 @@ def list_documents(session: requests.Session, user_token: str) -> list[DocumentE
     root_hash = sync.get_root_hash(session, user_token)
     root_entries = sync.get_entries(session, user_token, sync.ROOT_ID, root_hash)
 
-    entries = []
+    entries: list[DocumentEntry] = []
     for root_entry in root_entries:
         doc_schema_id = f"{root_entry.id}.docSchema"
         parts = sync.get_entries(session, user_token, doc_schema_id, root_entry.hash)
