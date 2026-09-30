@@ -7,7 +7,7 @@ name = "remarkable"
 version = "0.1.0"
 description = "Push PDF documents to a reMarkable tablet via the reMarkable Cloud API"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.12"
 dependencies = [
     "aiohttp>=3.13.5",
     "pydantic>=2.13.4",
