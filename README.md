@@ -22,6 +22,14 @@ there's no root/generation state for a bug here to corrupt.
 
 ## Install
 
+Install the `remarkable` CLI for your user (requires [uv](https://docs.astral.sh/uv/)):
+
+```bash
+make install    # remove again with: make uninstall
+```
+
+For development, or to use it as a library in your own environment:
+
 ```bash
 pip install -e .
 ```
