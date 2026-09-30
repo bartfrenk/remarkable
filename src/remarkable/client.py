@@ -48,7 +48,7 @@ class RemarkableClient:
     Use as an async context manager so the underlying HTTP session is closed:
 
         async with RemarkableClient() as client:
-            await client.push_pdf("report.pdf")
+            await client.upload_pdf("report.pdf")
 
     Construct it inside a running event loop (aiohttp requires one). If you
     pass your own `session`, you remain responsible for closing it.
@@ -84,12 +84,12 @@ class RemarkableClient:
     async def register(self, otp: str) -> None:
         await self.auth.register(otp)
 
-    async def push_pdf(self, path: str | Path, name: str | None = None) -> str:
+    async def upload_pdf(self, path: str | Path, name: str | None = None) -> str:
         path = Path(path)
         doc = Document(name or path.stem, path.read_bytes(), "application/pdf")
-        return await self.push_document(doc)
+        return await self.upload_document(doc)
 
-    async def push_document(self, doc: Document) -> str:
+    async def upload_document(self, doc: Document) -> str:
         doc_id = await self.api.upload(doc.name, doc.data, doc.mime_type)
         log.info("Uploaded %r as document %s", doc.name, doc_id)
         return doc_id

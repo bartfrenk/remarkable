@@ -1,7 +1,7 @@
 # remarkable
 
-A small Python library for pushing PDF documents to a reMarkable tablet via
-the reMarkable Cloud.
+A small Python library for uploading PDF documents to and downloading documents
+from a reMarkable tablet via the reMarkable Cloud.
 
 ## ⚠️ Important caveat
 
@@ -52,12 +52,12 @@ refreshed session tokens) at `~/.config/remarkable/credentials.json` (mode
 `0600`). You only need to do this once — the device token doesn't expire
 under normal use.
 
-## Push a PDF
+## Upload a PDF
 
 ```bash
-remarkable push report.pdf
-remarkable push report.pdf --name "Q3 Report"
-remarkable push a.pdf b.pdf c.pdf
+remarkable upload report.pdf
+remarkable upload report.pdf --name "Q3 Report"
+remarkable upload a.pdf b.pdf c.pdf
 ```
 
 The library is async (built on `aiohttp`); use the client as an async
@@ -71,7 +71,7 @@ from remarkable import RemarkableClient
 
 async def main() -> None:
     async with RemarkableClient() as client:
-        doc_id = await client.push_pdf("report.pdf", name="Q3 Report")
+        doc_id = await client.upload_pdf("report.pdf", name="Q3 Report")
 
 
 asyncio.run(main())
@@ -113,7 +113,7 @@ this repo.
 
 - `remarkable/auth.py` — device pairing, user token refresh/caching
 - `remarkable/sync.py` — `SyncApi`: all authenticated HTTP calls (upload, sync-tree reads)
-- `remarkable/client.py` — high-level `RemarkableClient` (`push_pdf`, `download`, ...)
+- `remarkable/client.py` — high-level `RemarkableClient` (`upload_pdf`, `download`, ...)
 - `remarkable/__main__.py` — `remarkable` CLI
 
 ## Tests

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "remarkable"
 version = "0.1.0"
-description = "Push PDF documents to a reMarkable tablet via the reMarkable Cloud API"
+description = "Upload and download reMarkable documents via the reMarkable Cloud API"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

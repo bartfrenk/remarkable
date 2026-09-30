@@ -8,7 +8,9 @@ from .exceptions import RemarkableError
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(prog="remarkable", description="Push PDFs to your reMarkable")
+    parser = argparse.ArgumentParser(
+        prog="remarkable", description="Upload and download reMarkable documents"
+    )
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable debug logging")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -17,9 +19,9 @@ def main() -> None:
         "code", help="One-time code from https://my.remarkable.com/device/browser/connect"
     )
 
-    push = sub.add_parser("push", help="Upload one or more PDFs")
-    push.add_argument("files", nargs="+", help="Path(s) to PDF file(s)")
-    push.add_argument("--name", help="Visible name (only valid with a single file)")
+    upload = sub.add_parser("upload", help="Upload one or more PDFs")
+    upload.add_argument("files", nargs="+", help="Path(s) to PDF file(s)")
+    upload.add_argument("--name", help="Visible name (only valid with a single file)")
 
     download = sub.add_parser("download", help="Download a document by its reMarkable path")
     download.add_argument("path", help="reMarkable path, e.g. /Notes/MyDoc")
@@ -33,7 +35,7 @@ def main() -> None:
         format="%(levelname)s %(name)s: %(message)s",
     )
 
-    if args.command == "push" and args.name and len(args.files) > 1:
+    if args.command == "upload" and args.name and len(args.files) > 1:
         parser.error("--name can only be used with a single file")
 
     try:
@@ -48,9 +50,9 @@ async def _run(args: argparse.Namespace) -> None:
         if args.command == "register":
             await client.register(args.code)
             print("Registered. Credentials saved.")
-        elif args.command == "push":
+        elif args.command == "upload":
             for f in args.files:
-                doc_id = await client.push_pdf(f, name=args.name)
+                doc_id = await client.upload_pdf(f, name=args.name)
                 print(f"Uploaded {f} -> document {doc_id}")
         elif args.command == "download":
             dest = await client.download(args.path, args.output)
