@@ -25,5 +25,9 @@ class SyncProtocolError(RemarkableError):
     """
 
 
+class GenerationConflictError(SyncProtocolError):
+    """Raised when another client changed the cloud state while we were editing it."""
+
+
 class DocumentNotFoundError(RemarkableError):
-    """Raised when a requested path doesn't resolve to a downloadable document."""
+    """Raised when a requested path doesn't resolve to a usable document or folder."""

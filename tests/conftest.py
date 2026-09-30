@@ -60,6 +60,7 @@ class FakeSession:
         payload: object = None,
         repeat: bool = False,
     ) -> None:
+        """Queue a response; a `url` ending in "*" matches any URL with that prefix."""
         if payload is not None:
             body = json.dumps(payload)
         if isinstance(body, str):
@@ -76,6 +77,15 @@ class FakeSession:
     ) -> FakeResponse:
         self.requests.append(SentRequest(method, url, dict(headers or {}), data))
         queue = self._routes.get((method, url))
+        if not queue:
+            queue = next(
+                (
+                    q
+                    for (m, pattern), q in self._routes.items()
+                    if q and m == method and pattern.endswith("*") and url.startswith(pattern[:-1])
+                ),
+                None,
+            )
         if not queue:
             raise AssertionError(f"Unexpected request: {method} {url}")
         response, repeat = queue[0]

@@ -1,7 +1,7 @@
 # remarkable
 
-Async Python library and CLI for uploading PDFs to, and downloading documents
-from, a reMarkable tablet via the unofficial reMarkable Cloud API. The API is
+Async Python library and CLI for uploading PDFs to, downloading documents
+from, and deleting documents on a reMarkable tablet via the unofficial reMarkable Cloud API. The API is
 undocumented and may change without notice.
 
 ## Install
@@ -20,12 +20,14 @@ Credentials are cached in `~/.config/remarkable/credentials.json`.
 remarkable register YOUR-CODE
 remarkable upload report.pdf --name "Q3 Report"   # or: upload a.pdf b.pdf
 remarkable download "/Notes/MyDoc" -o mydoc.pdf
+remarkable delete "/Notes/MyDoc"                  # moves it to the trash
 ```
 
 ```python
 async with RemarkableClient() as client:
     doc_id = await client.upload_pdf("report.pdf", name="Q3 Report")
     path = await client.download("/Notes/MyDoc")
+    await client.delete("/Notes/MyDoc")
 ```
 
 Uploads go to the root folder. Only PDF and EPUB documents can be downloaded,

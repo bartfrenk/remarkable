@@ -11,7 +11,11 @@ from typing import Literal, Self, final
 import aiohttp
 
 from remarkable.auth import DEFAULT_CREDENTIALS_PATH, Auth
-from remarkable.exceptions import DocumentNotFoundError, SyncProtocolError
+from remarkable.exceptions import (
+    DocumentNotFoundError,
+    GenerationConflictError,
+    SyncProtocolError,
+)
 from remarkable.sync import ROOT_ID, RawEntry, SyncApi
 
 log = logging.getLogger(__name__)
@@ -23,6 +27,12 @@ EntryType = Literal["DocumentType", "CollectionType", "TemplateType"]
 # Caps concurrent connections when the client creates its own session, so
 # walking a large library doesn't open hundreds of requests at once.
 MAX_CONNECTIONS = 16
+
+# How often an edit is re-applied on top of a root another client changed
+# while we were writing.
+MAX_ROOT_ATTEMPTS = 3
+
+TRASH_ID = "trash"
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,8 +105,8 @@ class RemarkableClient:
         return doc_id
 
     async def list_documents(self) -> list[DocumentEntry]:
-        root_hash = await self.api.root_hash()
-        root_entries = await self.api.get_entries(ROOT_ID, root_hash)
+        root = await self.api.get_root()
+        root_entries = await self.api.get_entries(ROOT_ID, root.hash)
         results = await asyncio.gather(*(self._load_entry(e) for e in root_entries))
         return [entry for entry in results if entry is not None]
 
@@ -129,6 +139,57 @@ class RemarkableClient:
         out.write_bytes(data)
         log.info("Downloaded %r (%d bytes) to %s", path, len(data), out)
         return out
+
+    async def delete(self, path: str) -> None:
+        """Move the document or folder at `path` to the trash, as the tablet does."""
+        entry = resolve_path(await self.list_documents(), path)
+        await self._update_metadata(entry.id, {"parent": TRASH_ID})
+        log.info("Moved %r to the trash", path)
+
+    async def _update_metadata(self, doc_id: str, changes: dict[str, object]) -> None:
+        for attempt in range(1, MAX_ROOT_ATTEMPTS + 1):
+            root = await self.api.get_root()
+            entries = await self.api.get_entries(ROOT_ID, root.hash)
+            index = next((i for i, e in enumerate(entries) if e.id == doc_id), None)
+            if index is None:
+                raise DocumentNotFoundError(f"Document {doc_id} no longer exists")
+
+            entries[index] = await self._rewrite_metadata(
+                entries[index], changes, root.schema_version
+            )
+            # The cloud rejects newly written schema 3 root indexes.
+            new_root = await self.api.put_entries("root", entries, schema_version=4)
+            try:
+                await self.api.put_root(new_root.hash, root.generation)
+                return
+            except GenerationConflictError:
+                if attempt == MAX_ROOT_ATTEMPTS:
+                    raise
+                log.info("Root changed while editing %s; retrying", doc_id)
+
+    async def _rewrite_metadata(
+        self, entry: RawEntry, changes: dict[str, object], schema_version: int
+    ) -> RawEntry:
+        parts = await self.api.get_entries(f"{entry.id}.docSchema", entry.hash)
+        index = next((i for i, p in enumerate(parts) if p.id.endswith(".metadata")), None)
+        if index is None:
+            raise SyncProtocolError(f"Document {entry.id} has no metadata")
+
+        meta_part = parts[index]
+        raw_meta = await self.api.get_text(meta_part.id, meta_part.hash)
+        try:
+            meta = json.loads(raw_meta)
+            meta.update(changes)
+            meta["version"] = int(meta.get("version", 0)) + 1
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise SyncProtocolError(
+                f"Unexpected metadata shape for {entry.id}: {raw_meta[:300]}"
+            ) from exc
+        meta["metadatamodified"] = True
+
+        data = json.dumps(meta, separators=(",", ":")).encode("utf-8")
+        parts[index] = await self.api.put_bytes(meta_part.id, data)
+        return await self.api.put_entries(entry.id, parts, schema_version)
 
     async def _download_blob(self, entry: DocumentEntry) -> tuple[bytes, str]:
         if entry.type != "DocumentType":

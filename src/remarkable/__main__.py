@@ -9,7 +9,7 @@ from .exceptions import RemarkableError
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        prog="remarkable", description="Upload and download reMarkable documents"
+        prog="remarkable", description="Upload, download and delete reMarkable documents"
     )
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable debug logging")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -28,6 +28,9 @@ def main() -> None:
     download.add_argument(
         "-o", "--output", help="Local destination file (default: ./<name>.<ext>)"
     )
+
+    delete = sub.add_parser("delete", help="Move documents or folders to the trash")
+    delete.add_argument("paths", nargs="+", help="reMarkable path(s), e.g. /Notes/MyDoc")
 
     args = parser.parse_args()
     logging.basicConfig(
@@ -57,6 +60,10 @@ async def _run(args: argparse.Namespace) -> None:
         elif args.command == "download":
             dest = await client.download(args.path, args.output)
             print(f"Downloaded {args.path} -> {dest}")
+        elif args.command == "delete":
+            for path in args.paths:
+                await client.delete(path)
+                print(f"Moved {path} to the trash")
 
 
 if __name__ == "__main__":

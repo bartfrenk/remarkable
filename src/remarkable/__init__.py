@@ -1,6 +1,7 @@
 from .client import RemarkableClient
 from .exceptions import (
     DocumentNotFoundError,
+    GenerationConflictError,
     NotRegisteredError,
     RegistrationError,
     RemarkableError,
@@ -16,4 +17,5 @@ __all__ = [
     "TokenRefreshError",
     "SyncProtocolError",
     "DocumentNotFoundError",
+    "GenerationConflictError",
 ]
