@@ -16,17 +16,17 @@ Both exchange endpoints return the raw JWT as the response body (not JSON).
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
 import time
 import uuid
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Self, cast, final
-from pydantic import BaseModel
 
-import requests
+import aiohttp
+from pydantic import BaseModel
 
 from .exceptions import NotRegisteredError, RegistrationError, TokenRefreshError
 
@@ -76,21 +76,23 @@ def _decode_jwt_payload(token: str) -> Claims | None:
 class Auth:
     def __init__(
         self,
+        session: aiohttp.ClientSession,
         credentials_path: Path = DEFAULT_CREDENTIALS_PATH,
-        session: requests.Session | None = None,
     ):
         self.credentials_path: Path = Path(credentials_path)
-        self.session = session or requests.Session()
+        self.session = session
         self.credentials = Credentials.load(self.credentials_path)
+        # Serializes refreshes so concurrent requests share a single new token.
+        self._refresh_lock = asyncio.Lock()
 
     @property
     def is_registered(self) -> bool:
         return bool(self.credentials.device_token)
 
-    def register(self, one_time_code: str) -> str:
+    async def register(self, one_time_code: str) -> str:
         device_id = str(uuid.uuid4())
-        log.info("Registering new device with")
-        resp = self.session.post(
+        log.info("Registering new device %s", device_id)
+        async with self.session.post(
             DEVICE_TOKEN_URL,
             headers={"Authorization": "Bearer"},
             json={
@@ -98,38 +100,47 @@ class Auth:
                 "deviceDesc": DEVICE_DESC,
                 "deviceID": device_id,
             },
-        )
-        if resp.status_code != 200 or not resp.text.strip():
-            raise RegistrationError(
-                f"Device registration failed ({resp.status_code}): {resp.text[:300]}"
-            )
+        ) as resp:
+            text = (await resp.text()).strip()
+            if resp.status != 200 or not text:
+                raise RegistrationError(f"Device registration failed ({resp.status}): {text[:300]}")
 
-        self.credentials = Credentials(
-            device_token=resp.text.strip(), device_id=device_id, user_token=None
-        )
+        self.credentials = Credentials(device_token=text, device_id=device_id, user_token=None)
         self.credentials.save(self.credentials_path)
         log.info("Device registered and credentials saved to %s", self.credentials_path)
-        return cast(str, self.credentials.device_token)
+        return text
 
-    def get_user_token(self, force: bool = False) -> str:
+    def _cached_user_token(self) -> str | None:
+        token = self.credentials.user_token
+        if token and (claims := _decode_jwt_payload(token)):
+            if time.time() < claims.exp - _EXPIRY_SAFETY_MARGIN_SECONDS:
+                return token
+        return None
+
+    async def get_user_token(self, force: bool = False) -> str:
         if not self.credentials.device_token:
             raise NotRegisteredError()
 
-        if not force and self.credentials.user_token:
-            if claims := _decode_jwt_payload(self.credentials.user_token):
-                if time.time() < claims.exp - _EXPIRY_SAFETY_MARGIN_SECONDS:
-                    return self.credentials.user_token
+        if not force and (token := self._cached_user_token()):
+            return token
 
-        log.info("Refreshing user token")
-        resp = self.session.post(
-            USER_TOKEN_URL,
-            headers={"Authorization": f"Bearer {self.credentials.device_token}"},
-        )
-        if resp.status_code != 200 or not resp.text.strip():
-            raise TokenRefreshError(
-                f"User token refresh failed ({resp.status_code}): {resp.text[:300]}"
-            )
+        stale = self.credentials.user_token
+        async with self._refresh_lock:
+            # Another task may have refreshed while we waited for the lock.
+            if self.credentials.user_token != stale and (token := self._cached_user_token()):
+                return token
 
-        self.credentials.user_token = resp.text.strip()
-        self.credentials.save(self.credentials_path)
-        return self.credentials.user_token
+            log.info("Refreshing user token")
+            async with self.session.post(
+                USER_TOKEN_URL,
+                headers={"Authorization": f"Bearer {self.credentials.device_token}"},
+            ) as resp:
+                text = (await resp.text()).strip()
+                if resp.status != 200 or not text:
+                    raise TokenRefreshError(
+                        f"User token refresh failed ({resp.status}): {text[:300]}"
+                    )
+
+            self.credentials.user_token = text
+            self.credentials.save(self.credentials_path)
+            return text

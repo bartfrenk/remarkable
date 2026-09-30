@@ -1,4 +1,5 @@
 import argparse
+import asyncio
 import logging
 import sys
 
@@ -30,24 +31,28 @@ def main() -> None:
         format="%(levelname)s %(name)s: %(message)s",
     )
 
-    client = RemarkableClient()
+    if args.command == "push" and args.name and len(args.files) > 1:
+        parser.error("--name can only be used with a single file")
 
     try:
-        if args.command == "register":
-            client.register(args.code)
-            print("Registered. Credentials saved.")
-        elif args.command == "push":
-            if args.name and len(args.files) > 1:
-                parser.error("--name can only be used with a single file")
-            for f in args.files:
-                doc_id = client.push_pdf(f, name=args.name)
-                print(f"Uploaded {f} -> document {doc_id}")
-        elif args.command == "download":
-            dest = client.download(args.path, args.output)
-            print(f"Downloaded {args.path} -> {dest}")
+        asyncio.run(_run(args))
     except RemarkableError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
+
+
+async def _run(args: argparse.Namespace) -> None:
+    async with RemarkableClient() as client:
+        if args.command == "register":
+            await client.register(args.code)
+            print("Registered. Credentials saved.")
+        elif args.command == "push":
+            for f in args.files:
+                doc_id = await client.push_pdf(f, name=args.name)
+                print(f"Uploaded {f} -> document {doc_id}")
+        elif args.command == "download":
+            dest = await client.download(args.path, args.output)
+            print(f"Downloaded {args.path} -> {dest}")
 
 
 if __name__ == "__main__":

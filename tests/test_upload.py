@@ -1,61 +1,37 @@
 import base64
 import json
 
-import requests
-import responses
-
-from remarkable.client import Document, RemarkableClient
+from conftest import FakeSession, make_client
+from remarkable.client import Document
 from remarkable.sync import UPLOAD_URL
 
 
-def _make_client(tokens: list[str]) -> RemarkableClient:
-    client = RemarkableClient(credentials_path="/nonexistent", session=requests.Session())
-    remaining = iter(tokens)
-    current = next(remaining)
+async def test_push_document_sends_expected_request_and_parses_doc_id(session: FakeSession):
+    session.add("POST", UPLOAD_URL, payload={"docID": "abc-123", "hash": "deadbeef"})
 
-    def get_user_token(force: bool = False) -> str:
-        nonlocal current
-        if force:
-            current = next(remaining)
-        return current
-
-    client.auth.get_user_token = get_user_token  # type: ignore[method-assign]
-    return client
-
-
-@responses.activate
-def test_push_document_sends_expected_request_and_parses_doc_id():
-    responses.add(
-        responses.POST,
-        UPLOAD_URL,
-        json={"docID": "abc-123", "hash": "deadbeef"},
-        status=200,
-    )
-
-    client = _make_client(["usertoken"])
+    client = make_client(session, ["usertoken"])
     doc = Document("My Doc", b"%PDF-1.4 ...", "application/pdf")
-    doc_id = client.push_document(doc)
+    doc_id = await client.push_document(doc)
 
     assert doc_id == "abc-123"
-    sent = responses.calls[0].request
+    [sent] = session.requests
     assert sent.headers["Authorization"] == "Bearer usertoken"
     assert sent.headers["Content-Type"] == "application/pdf"
     assert sent.headers["rm-source"] == "RoR-Browser"
     meta = json.loads(base64.b64decode(sent.headers["rm-meta"]))
     assert meta == {"file_name": "My Doc"}
-    assert sent.body == b"%PDF-1.4 ..."
+    assert sent.data == b"%PDF-1.4 ..."
 
 
-@responses.activate
-def test_push_document_retries_with_fresh_token_on_401():
-    responses.add(responses.POST, UPLOAD_URL, status=401)
-    responses.add(responses.POST, UPLOAD_URL, json={"docID": "abc-123"}, status=200)
+async def test_push_document_retries_with_fresh_token_on_401(session: FakeSession):
+    session.add("POST", UPLOAD_URL, status=401)
+    session.add("POST", UPLOAD_URL, payload={"docID": "abc-123"})
 
-    client = _make_client(["stale", "fresh"])
-    doc_id = client.push_document(Document("My Doc", b"%PDF", "application/pdf"))
+    client = make_client(session, ["stale", "fresh"])
+    doc_id = await client.push_document(Document("My Doc", b"%PDF", "application/pdf"))
 
     assert doc_id == "abc-123"
-    assert [c.request.headers["Authorization"] for c in responses.calls] == [
+    assert [r.headers["Authorization"] for r in session.requests] == [
         "Bearer stale",
         "Bearer fresh",
     ]

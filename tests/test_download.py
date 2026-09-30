@@ -1,9 +1,4 @@
-import json
-
-import requests
-import responses
-
-from remarkable.client import RemarkableClient
+from conftest import FakeSession, make_client
 from remarkable.sync import RAW_HOST
 
 DOC_ID = "doc-uuid"
@@ -19,28 +14,20 @@ def _index_text(entries: list[tuple[str, str, int, int]]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _make_client() -> RemarkableClient:
-    client = RemarkableClient(credentials_path="/nonexistent", session=requests.Session())
-    client.auth.get_user_token = lambda force=False: "usertoken"  # type: ignore[method-assign]
-    return client
-
-
-@responses.activate
-def test_download_resolves_path_and_writes_pdf_bytes(tmp_path):
-    responses.add(
-        responses.GET,
+async def test_download_resolves_path_and_writes_pdf_bytes(session: FakeSession, tmp_path):
+    session.add(
+        "GET",
         f"{RAW_HOST}/sync/v4/root",
-        json={"hash": ROOT_HASH, "generation": 1, "schemaVersion": 3},
-        status=200,
+        payload={"hash": ROOT_HASH, "generation": 1, "schemaVersion": 3},
     )
-    responses.add(
-        responses.GET,
+    session.add(
+        "GET",
         f"{RAW_HOST}/sync/v3/files/{ROOT_HASH}",
         body=_index_text([(DOC_HASH, DOC_ID, 3, 0)]),
-        status=200,
     )
-    responses.add(
-        responses.GET,
+    # The document index is fetched twice: once while listing, once to download.
+    session.add(
+        "GET",
         f"{RAW_HOST}/sync/v3/files/{DOC_HASH}",
         body=_index_text(
             [
@@ -48,38 +35,30 @@ def test_download_resolves_path_and_writes_pdf_bytes(tmp_path):
                 (PDF_HASH, f"{DOC_ID}.pdf", 0, 0),
             ]
         ),
-        status=200,
+        repeat=True,
     )
-    responses.add(
-        responses.GET,
+    session.add(
+        "GET",
         f"{RAW_HOST}/sync/v3/files/{META_HASH}",
-        body=json.dumps(
-            {
-                "visibleName": "MyDoc",
-                "parent": "",
-                "type": "DocumentType",
-                "lastModified": "0",
-                "pinned": False,
-            }
-        ),
-        status=200,
+        payload={
+            "visibleName": "MyDoc",
+            "parent": "",
+            "type": "DocumentType",
+            "lastModified": "0",
+            "pinned": False,
+        },
     )
-    responses.add(
-        responses.GET,
-        f"{RAW_HOST}/sync/v3/files/{PDF_HASH}",
-        body=b"%PDF-1.4 ...",
-        status=200,
-    )
+    session.add("GET", f"{RAW_HOST}/sync/v3/files/{PDF_HASH}", body=b"%PDF-1.4 ...")
 
-    client = _make_client()
+    client = make_client(session, ["usertoken"])
     dest = tmp_path / "out.pdf"
-    result = client.download("/MyDoc", dest)
+    result = await client.download("/MyDoc", dest)
 
     assert result == dest
     assert dest.read_bytes() == b"%PDF-1.4 ..."
 
-    for call in responses.calls:
-        assert call.request.headers["Authorization"] == "Bearer usertoken"
+    for request in session.requests:
+        assert request.headers["Authorization"] == "Bearer usertoken"
 
-    pdf_call = next(c for c in responses.calls if c.request.url.endswith(f"/{PDF_HASH}"))
-    assert pdf_call.request.headers["rm-filename"] == f"{DOC_ID}.pdf"
+    pdf_request = next(r for r in session.requests if r.url.endswith(f"/{PDF_HASH}"))
+    assert pdf_request.headers["rm-filename"] == f"{DOC_ID}.pdf"

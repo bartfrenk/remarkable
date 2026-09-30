@@ -23,7 +23,7 @@ from base64 import b64encode
 from dataclasses import dataclass
 from typing import Any, final
 
-import requests
+import aiohttp
 
 from remarkable.auth import Auth
 from remarkable.exceptions import SyncProtocolError
@@ -67,56 +67,57 @@ def parse_entries(text: str) -> list[RawEntry]:
 class SyncApi:
     """All HTTP calls to the reMarkable Cloud, authenticated via `Auth`."""
 
-    def __init__(self, session: requests.Session, auth: Auth):
+    def __init__(self, session: aiohttp.ClientSession, auth: Auth):
         self.session = session
         self.auth = auth
 
-    def _request(
+    async def _request(
         self,
         method: str,
         url: str,
         what: str,
         headers: dict[str, str] | None = None,
         **kwargs: Any,
-    ) -> requests.Response:
-        def send(force_refresh: bool) -> requests.Response:
-            token = self.auth.get_user_token(force=force_refresh)
+    ) -> bytes:
+        async def send(force_refresh: bool) -> tuple[int, bytes]:
+            token = await self.auth.get_user_token(force=force_refresh)
             all_headers = {"Authorization": f"Bearer {token}", **(headers or {})}
-            return self.session.request(method, url, headers=all_headers, **kwargs)
+            async with self.session.request(method, url, headers=all_headers, **kwargs) as resp:
+                return resp.status, await resp.read()
 
-        resp = send(force_refresh=False)
-        if resp.status_code == 401:
+        status, body = await send(force_refresh=False)
+        if status == 401:
             log.info("Got 401 for %s; retrying with a fresh user token", what)
-            resp = send(force_refresh=True)
-        if not resp.ok:
-            raise SyncProtocolError(f"{what} failed ({resp.status_code}): {resp.text[:300]}")
-        return resp
+            status, body = await send(force_refresh=True)
+        if not 200 <= status < 300:
+            text = body.decode("utf-8", errors="replace")
+            raise SyncProtocolError(f"{what} failed ({status}): {text[:300]}")
+        return body
 
-    def root_hash(self) -> str:
-        resp = self._request("GET", f"{RAW_HOST}/sync/v4/root", "Fetching root hash")
+    async def root_hash(self) -> str:
+        body = await self._request("GET", f"{RAW_HOST}/sync/v4/root", "Fetching root hash")
         try:
-            return str(resp.json()["hash"])
+            return str(json.loads(body)["hash"])
         except (ValueError, KeyError) as exc:
-            raise SyncProtocolError(f"Unexpected root response shape: {resp.text[:300]}") from exc
+            raise SyncProtocolError(f"Unexpected root response shape: {body[:300]!r}") from exc
 
-    def get_bytes(self, file_id: str, hash: str) -> bytes:
-        resp = self._request(
+    async def get_bytes(self, file_id: str, hash: str) -> bytes:
+        return await self._request(
             "GET",
             f"{RAW_HOST}/sync/v3/files/{hash}",
             f"Fetching {file_id!r}",
             headers={"rm-filename": file_id},
         )
-        return resp.content
 
-    def get_text(self, file_id: str, hash: str) -> str:
-        return self.get_bytes(file_id, hash).decode("utf-8")
+    async def get_text(self, file_id: str, hash: str) -> str:
+        return (await self.get_bytes(file_id, hash)).decode("utf-8")
 
-    def get_entries(self, file_id: str, hash: str) -> list[RawEntry]:
-        return parse_entries(self.get_text(file_id, hash))
+    async def get_entries(self, file_id: str, hash: str) -> list[RawEntry]:
+        return parse_entries(await self.get_text(file_id, hash))
 
-    def upload(self, name: str, data: bytes, mime_type: str) -> str:
+    async def upload(self, name: str, data: bytes, mime_type: str) -> str:
         meta = b64encode(json.dumps({"file_name": name}).encode("utf-8")).decode("ascii")
-        resp = self._request(
+        body = await self._request(
             "POST",
             UPLOAD_URL,
             f"Uploading {name!r}",
@@ -124,6 +125,6 @@ class SyncApi:
             data=data,
         )
         try:
-            return resp.json()["docID"]
+            return str(json.loads(body)["docID"])
         except (ValueError, KeyError) as exc:
-            raise SyncProtocolError(f"Unexpected upload response shape: {resp.text[:300]}") from exc
+            raise SyncProtocolError(f"Unexpected upload response shape: {body[:300]!r}") from exc

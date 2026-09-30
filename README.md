@@ -35,7 +35,16 @@ pip install -e .
 ```bash
 remarkable register YOUR-CODE
 # or, from Python:
-python -c "from remarkable import RemarkableClient; RemarkableClient().register('YOUR-CODE')"
+python -c "
+import asyncio
+from remarkable import RemarkableClient
+
+async def main():
+    async with RemarkableClient() as client:
+        await client.register('YOUR-CODE')
+
+asyncio.run(main())
+"
 ```
 
 This exchanges the code for a device token and caches it (along with
@@ -51,11 +60,21 @@ remarkable push report.pdf --name "Q3 Report"
 remarkable push a.pdf b.pdf c.pdf
 ```
 
+The library is async (built on `aiohttp`); use the client as an async
+context manager so its HTTP session gets closed:
+
 ```python
+import asyncio
+
 from remarkable import RemarkableClient
 
-client = RemarkableClient()
-doc_id = client.push_pdf("report.pdf", name="Q3 Report")
+
+async def main() -> None:
+    async with RemarkableClient() as client:
+        doc_id = await client.push_pdf("report.pdf", name="Q3 Report")
+
+
+asyncio.run(main())
 ```
 
 Documents are uploaded to the root of your reMarkable file tree.
@@ -68,10 +87,8 @@ remarkable download "/Notes/MyDoc" -o mydoc.pdf
 ```
 
 ```python
-from remarkable import RemarkableClient
-
-client = RemarkableClient()
-path = client.download("/Notes/MyDoc")
+async with RemarkableClient() as client:
+    path = await client.download("/Notes/MyDoc")
 ```
 
 Paths are resolved against `visibleName`/folder structure, e.g.
