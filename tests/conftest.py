@@ -9,8 +9,9 @@ from __future__ import annotations
 import json
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
-from typing import Any
+from typing import cast
 
+import aiohttp
 import pytest
 
 from remarkable.client import RemarkableClient
@@ -39,7 +40,7 @@ class SentRequest:
     method: str
     url: str
     headers: dict[str, str]
-    data: Any
+    data: bytes | None
 
 
 @dataclass
@@ -56,7 +57,7 @@ class FakeSession:
         *,
         status: int = 200,
         body: bytes | str = b"",
-        payload: Any = None,
+        payload: object = None,
         repeat: bool = False,
     ) -> None:
         if payload is not None:
@@ -65,10 +66,15 @@ class FakeSession:
             body = body.encode("utf-8")
         self._routes[(method, url)].append((FakeResponse(status, body), repeat))
 
-    def request(self, method: str, url: str, **kwargs: Any) -> FakeResponse:
-        self.requests.append(
-            SentRequest(method, url, dict(kwargs.get("headers") or {}), kwargs.get("data"))
-        )
+    def request(
+        self,
+        method: str,
+        url: str,
+        *,
+        headers: dict[str, str] | None = None,
+        data: bytes | None = None,
+    ) -> FakeResponse:
+        self.requests.append(SentRequest(method, url, dict(headers or {}), data))
         queue = self._routes.get((method, url))
         if not queue:
             raise AssertionError(f"Unexpected request: {method} {url}")
@@ -77,11 +83,17 @@ class FakeSession:
             queue.popleft()
         return response
 
-    def post(self, url: str, **kwargs: Any) -> FakeResponse:
-        return self.request("POST", url, **kwargs)
+    def post(
+        self, url: str, *, headers: dict[str, str] | None = None, data: bytes | None = None
+    ) -> FakeResponse:
+        return self.request("POST", url, headers=headers, data=data)
 
-    def get(self, url: str, **kwargs: Any) -> FakeResponse:
-        return self.request("GET", url, **kwargs)
+    def get(self, url: str, *, headers: dict[str, str] | None = None) -> FakeResponse:
+        return self.request("GET", url, headers=headers)
+
+    def as_client_session(self) -> aiohttp.ClientSession:
+        """This object, typed as the `aiohttp.ClientSession` it duck-types."""
+        return cast(aiohttp.ClientSession, cast(object, self))
 
 
 @pytest.fixture
@@ -91,7 +103,7 @@ def session() -> FakeSession:
 
 def make_client(session: FakeSession, tokens: list[str]) -> RemarkableClient:
     """A client whose Auth hands out `tokens`, advancing on each forced refresh."""
-    client = RemarkableClient(credentials_path="/nonexistent", session=session)  # type: ignore[arg-type]
+    client = RemarkableClient(credentials_path="/nonexistent", session=session.as_client_session())
     remaining = iter(tokens)
     current = next(remaining)
 

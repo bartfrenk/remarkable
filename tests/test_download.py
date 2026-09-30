@@ -1,5 +1,7 @@
-from conftest import FakeSession, make_client
+from pathlib import Path
+
 from remarkable.sync import RAW_HOST
+from tests.conftest import FakeSession, make_client
 
 DOC_ID = "doc-uuid"
 ROOT_HASH = "root-hash"
@@ -14,7 +16,7 @@ def _index_text(entries: list[tuple[str, str, int, int]]) -> str:
     return "\n".join(lines) + "\n"
 
 
-async def test_download_resolves_path_and_writes_pdf_bytes(session: FakeSession, tmp_path):
+async def test_download_resolves_path_and_writes_pdf_bytes(session: FakeSession, tmp_path: Path):
     session.add(
         "GET",
         f"{RAW_HOST}/sync/v4/root",

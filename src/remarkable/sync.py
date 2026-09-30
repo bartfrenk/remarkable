@@ -21,7 +21,7 @@ import json
 import logging
 from base64 import b64encode
 from dataclasses import dataclass
-from typing import Any, final
+from typing import final
 
 import aiohttp
 
@@ -77,12 +77,12 @@ class SyncApi:
         url: str,
         what: str,
         headers: dict[str, str] | None = None,
-        **kwargs: Any,
+        data: bytes | None = None,
     ) -> bytes:
         async def send(force_refresh: bool) -> tuple[int, bytes]:
             token = await self.auth.get_user_token(force=force_refresh)
             all_headers = {"Authorization": f"Bearer {token}", **(headers or {})}
-            async with self.session.request(method, url, headers=all_headers, **kwargs) as resp:
+            async with self.session.request(method, url, headers=all_headers, data=data) as resp:
                 return resp.status, await resp.read()
 
         status, body = await send(force_refresh=False)

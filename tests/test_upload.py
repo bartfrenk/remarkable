@@ -1,9 +1,9 @@
 import base64
 import json
 
-from conftest import FakeSession, make_client
 from remarkable.client import Document
 from remarkable.sync import UPLOAD_URL
+from tests.conftest import FakeSession, make_client
 
 
 async def test_push_document_sends_expected_request_and_parses_doc_id(session: FakeSession):
