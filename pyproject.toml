@@ -3,7 +3,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "rmpush"
+name = "remarkable"
 version = "0.1.0"
 description = "Push PDF documents to a reMarkable tablet via the reMarkable Cloud API"
 readme = "README.md"
@@ -18,7 +18,7 @@ dependencies = [
 dev = ["pytest>=7.0", "responses>=0.23"]
 
 [project.scripts]
-rmpush = "rmpush.__main__:main"
+remarkable = "remarkable.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

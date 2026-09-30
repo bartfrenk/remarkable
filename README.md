@@ -1,4 +1,4 @@
-# rmpush
+# remarkable
 
 A small Python library for pushing PDF documents to a reMarkable tablet via
 the reMarkable Cloud.
@@ -33,26 +33,26 @@ pip install -e .
 2. Run:
 
 ```bash
-rmpush register YOUR-CODE
+remarkable register YOUR-CODE
 # or, from Python:
-python -c "from rmpush import RemarkableClient; RemarkableClient().register('YOUR-CODE')"
+python -c "from remarkable import RemarkableClient; RemarkableClient().register('YOUR-CODE')"
 ```
 
 This exchanges the code for a device token and caches it (along with
-refreshed session tokens) at `~/.config/rmpush/credentials.json` (mode
+refreshed session tokens) at `~/.config/remarkable/credentials.json` (mode
 `0600`). You only need to do this once — the device token doesn't expire
 under normal use.
 
 ## Push a PDF
 
 ```bash
-rmpush push report.pdf
-rmpush push report.pdf --name "Q3 Report"
-rmpush push a.pdf b.pdf c.pdf
+remarkable push report.pdf
+remarkable push report.pdf --name "Q3 Report"
+remarkable push a.pdf b.pdf c.pdf
 ```
 
 ```python
-from rmpush import RemarkableClient
+from remarkable import RemarkableClient
 
 client = RemarkableClient()
 doc_id = client.push_pdf("report.pdf", name="Q3 Report")
@@ -63,12 +63,12 @@ Documents are uploaded to the root of your reMarkable file tree.
 ## Download a document
 
 ```bash
-rmpush download "/Notes/MyDoc"
-rmpush download "/Notes/MyDoc" -o mydoc.pdf
+remarkable download "/Notes/MyDoc"
+remarkable download "/Notes/MyDoc" -o mydoc.pdf
 ```
 
 ```python
-from rmpush import RemarkableClient
+from remarkable import RemarkableClient
 
 client = RemarkableClient()
 path = client.download("/Notes/MyDoc")
@@ -81,23 +81,23 @@ stored as a multi-file archive and aren't supported.
 
 Downloading walks reMarkable's content-addressed sync protocol (root hash →
 per-document index → content blob) rather than a single endpoint, since the
-cloud API has no one-shot "download by id" call — see `rmpush/sync.py`.
+cloud API has no one-shot "download by id" call — see `remarkable/sync.py`.
 
 ## If it doesn't work
 
 Run with `-v` (CLI) or configure `logging.basicConfig(level=logging.DEBUG)`
 (library) to see each HTTP call. If you get a 404/host-not-found, reMarkable
-has likely moved its endpoints again — check `rmpush/auth.py` (`AUTH_BASE`),
-`rmpush/client.py` (`UPLOAD_HOST`), and `rmpush/sync.py` (`RAW_HOST`) against
+has likely moved its endpoints again — check `remarkable/auth.py` (`AUTH_BASE`),
+`remarkable/client.py` (`UPLOAD_HOST`), and `remarkable/sync.py` (`RAW_HOST`) against
 the current `rmapi-js` source for the new hosts, or file an issue against
 this repo.
 
 ## Layout
 
-- `rmpush/auth.py` — device pairing, user token refresh/caching
-- `rmpush/sync.py` — low-level reads against the content-addressed sync protocol
-- `rmpush/client.py` — high-level `RemarkableClient` (`push_pdf`, `download`, ...)
-- `rmpush/__main__.py` — `rmpush` CLI
+- `remarkable/auth.py` — device pairing, user token refresh/caching
+- `remarkable/sync.py` — low-level reads against the content-addressed sync protocol
+- `remarkable/client.py` — high-level `RemarkableClient` (`push_pdf`, `download`, ...)
+- `remarkable/__main__.py` — `remarkable` CLI
 
 ## Tests
 

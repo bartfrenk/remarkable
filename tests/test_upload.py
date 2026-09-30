@@ -4,7 +4,7 @@ import json
 import requests
 import responses
 
-from rmpush.client import UPLOAD_URL, Document, upload_file
+from remarkable.client import UPLOAD_URL, Document, upload_file
 
 
 @responses.activate

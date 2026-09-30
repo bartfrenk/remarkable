@@ -3,14 +3,14 @@ from .exceptions import (
     DocumentNotFoundError,
     NotRegisteredError,
     RegistrationError,
-    RmpushError,
+    RemarkableError,
     SyncProtocolError,
     TokenRefreshError,
 )
 
 __all__ = [
     "RemarkableClient",
-    "RmpushError",
+    "RemarkableError",
     "NotRegisteredError",
     "RegistrationError",
     "TokenRefreshError",

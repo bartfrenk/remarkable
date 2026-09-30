@@ -3,11 +3,11 @@ import logging
 import sys
 
 from .client import RemarkableClient
-from .exceptions import RmpushError
+from .exceptions import RemarkableError
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(prog="rmpush", description="Push PDFs to your reMarkable")
+    parser = argparse.ArgumentParser(prog="remarkable", description="Push PDFs to your reMarkable")
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable debug logging")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -45,7 +45,7 @@ def main() -> None:
         elif args.command == "download":
             dest = client.download(args.path, args.output)
             print(f"Downloaded {args.path} -> {dest}")
-    except RmpushError as exc:
+    except RemarkableError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
 

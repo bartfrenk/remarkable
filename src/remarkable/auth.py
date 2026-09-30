@@ -36,7 +36,7 @@ AUTH_BASE = "https://webapp-prod.cloud.remarkable.engineering"
 DEVICE_TOKEN_URL = f"{AUTH_BASE}/token/json/2/device/new"
 USER_TOKEN_URL = f"{AUTH_BASE}/token/json/2/user/new"
 DEVICE_DESC = "browser-chrome"
-DEFAULT_CREDENTIALS_PATH = Path.home() / ".config" / "rmpush" / "credentials.json"
+DEFAULT_CREDENTIALS_PATH = Path.home() / ".config" / "remarkable" / "credentials.json"
 _EXPIRY_SAFETY_MARGIN_SECONDS = 60
 
 

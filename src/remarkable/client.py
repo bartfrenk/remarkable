@@ -9,9 +9,9 @@ from typing import Literal, final
 
 import requests
 
-from rmpush import sync
-from rmpush.auth import DEFAULT_CREDENTIALS_PATH, Auth
-from rmpush.exceptions import DocumentNotFoundError, SyncProtocolError
+from remarkable import sync
+from remarkable.auth import DEFAULT_CREDENTIALS_PATH, Auth
+from remarkable.exceptions import DocumentNotFoundError, SyncProtocolError
 
 log = logging.getLogger(__name__)
 

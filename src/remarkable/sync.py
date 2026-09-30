@@ -21,7 +21,7 @@ from dataclasses import dataclass
 
 import requests
 
-from rmpush.exceptions import SyncProtocolError
+from remarkable.exceptions import SyncProtocolError
 
 log = logging.getLogger(__name__)
 

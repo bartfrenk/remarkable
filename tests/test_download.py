@@ -3,8 +3,8 @@ import json
 import requests
 import responses
 
-from rmpush.client import RemarkableClient
-from rmpush.sync import RAW_HOST
+from remarkable.client import RemarkableClient
+from remarkable.sync import RAW_HOST
 
 DOC_ID = "doc-uuid"
 ROOT_HASH = "root-hash"
