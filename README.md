@@ -88,14 +88,14 @@ cloud API has no one-shot "download by id" call — see `remarkable/sync.py`.
 Run with `-v` (CLI) or configure `logging.basicConfig(level=logging.DEBUG)`
 (library) to see each HTTP call. If you get a 404/host-not-found, reMarkable
 has likely moved its endpoints again — check `remarkable/auth.py` (`AUTH_BASE`),
-`remarkable/client.py` (`UPLOAD_HOST`), and `remarkable/sync.py` (`RAW_HOST`) against
+and `remarkable/sync.py` (`UPLOAD_HOST`, `RAW_HOST`) against
 the current `rmapi-js` source for the new hosts, or file an issue against
 this repo.
 
 ## Layout
 
 - `remarkable/auth.py` — device pairing, user token refresh/caching
-- `remarkable/sync.py` — low-level reads against the content-addressed sync protocol
+- `remarkable/sync.py` — `SyncApi`: all authenticated HTTP calls (upload, sync-tree reads)
 - `remarkable/client.py` — high-level `RemarkableClient` (`push_pdf`, `download`, ...)
 - `remarkable/__main__.py` — `remarkable` CLI
 
