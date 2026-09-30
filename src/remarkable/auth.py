@@ -121,7 +121,10 @@ class Auth:
 
     async def get_user_token(self, force: bool = False) -> str:
         if not self.credentials.device_token:
-            raise NotRegisteredError()
+            raise NotRegisteredError(
+                f"No device token in {self.credentials_path}. Run `remarkable register CODE` "
+                "with a code from https://my.remarkable.com/device/browser/connect"
+            )
 
         if not force and (token := self._cached_user_token()):
             return token

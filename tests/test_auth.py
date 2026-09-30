@@ -4,7 +4,10 @@ import json
 import time
 from pathlib import Path
 
+import pytest
+
 from remarkable.auth import USER_TOKEN_URL, Auth, Credentials
+from remarkable.exceptions import NotRegisteredError
 from tests.conftest import FakeSession
 
 
@@ -25,3 +28,10 @@ async def test_concurrent_callers_share_a_single_refresh(session: FakeSession, t
     assert tokens == [new_token] * 5
     assert len(session.requests) == 1
     assert session.requests[0].headers["Authorization"] == "Bearer devicetoken"
+
+
+async def test_unregistered_error_explains_how_to_register(session: FakeSession, tmp_path: Path):
+    auth = Auth(session.as_client_session(), credentials_path=tmp_path / "credentials.json")
+
+    with pytest.raises(NotRegisteredError, match="remarkable register"):
+        await auth.get_user_token()
