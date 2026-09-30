@@ -103,7 +103,9 @@ class Auth:
         ) as resp:
             text = (await resp.text()).strip()
             if resp.status != 200 or not text:
-                raise RegistrationError(f"Device registration failed ({resp.status}): {text[:300]}")
+                raise RegistrationError(
+                    f"Device registration failed ({resp.status}): {text[:300]}"
+                )
 
         self.credentials = Credentials(device_token=text, device_id=device_id, user_token=None)
         self.credentials.save(self.credentials_path)

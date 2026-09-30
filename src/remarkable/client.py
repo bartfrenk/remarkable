@@ -167,4 +167,3 @@ def resolve_path(entries: list[DocumentEntry], path: str) -> DocumentEntry:
 
     assert entry is not None
     return entry
-

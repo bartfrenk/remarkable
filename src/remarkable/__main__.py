@@ -23,7 +23,9 @@ def main() -> None:
 
     download = sub.add_parser("download", help="Download a document by its reMarkable path")
     download.add_argument("path", help="reMarkable path, e.g. /Notes/MyDoc")
-    download.add_argument("-o", "--output", help="Local destination file (default: ./<name>.<ext>)")
+    download.add_argument(
+        "-o", "--output", help="Local destination file (default: ./<name>.<ext>)"
+    )
 
     args = parser.parse_args()
     logging.basicConfig(

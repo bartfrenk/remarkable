@@ -26,6 +26,7 @@ remarkable = "remarkable.__main__:main"
 where = ["src"]
 
 [tool.black]
+target-version = ["py312"]
 line-length = 99
 
 [tool.isort]
