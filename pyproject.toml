@@ -13,14 +13,13 @@ dependencies = [
     "pydantic>=2.13.4",
 ]
 
-[project.optional-dependencies]
-dev = [
-    "pytest>=7.0",
-    "pytest-asyncio>=1.2.0",
-]
 
 [project.scripts]
 remarkable = "remarkable.__main__:main"
+
+[dependency-groups]
+test = ["pytest>=7.0", "pytest-asyncio>=1.2.0"]
+lint = ["black>=24.2.0", "isort>=5.6.4", "basedpyright>=1.31.0"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
