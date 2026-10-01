@@ -22,6 +22,7 @@ def main() -> None:
     upload = sub.add_parser("upload", help="Upload one or more PDFs")
     upload.add_argument("files", nargs="+", help="Path(s) to PDF file(s)")
     upload.add_argument("--name", help="Visible name (only valid with a single file)")
+    upload.add_argument("--folder", help="Existing folder to upload into, e.g. /Notes")
 
     download = sub.add_parser("download", help="Download a document by its reMarkable path")
     download.add_argument("path", help="reMarkable path, e.g. /Notes/MyDoc")
@@ -55,7 +56,7 @@ async def _run(args: argparse.Namespace) -> None:
             print("Registered. Credentials saved.")
         elif args.command == "upload":
             for f in args.files:
-                doc_id = await client.upload_pdf(f, name=args.name)
+                doc_id = await client.upload_pdf(f, name=args.name, folder=args.folder)
                 print(f"Uploaded {f} -> document {doc_id}")
         elif args.command == "download":
             dest = await client.download(args.path, args.output)

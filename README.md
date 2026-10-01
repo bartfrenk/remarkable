@@ -19,6 +19,7 @@ Credentials are cached in `~/.config/remarkable/credentials.json`.
 ```bash
 remarkable register YOUR-CODE
 remarkable upload report.pdf --name "Q3 Report"   # or: upload a.pdf b.pdf
+remarkable upload report.pdf --folder "/Work"      # into an existing folder
 remarkable download "/Notes/MyDoc" -o mydoc.pdf
 remarkable delete "/Notes/MyDoc"                  # moves it to the trash
 ```
@@ -30,7 +31,7 @@ async with RemarkableClient() as client:
     await client.delete("/Notes/MyDoc")
 ```
 
-Uploads go to the root folder. Only PDF and EPUB documents can be downloaded,
+Uploads go to the root folder unless `--folder` is given. Only PDF and EPUB documents can be downloaded,
 not handwritten notebooks.
 
 ## Troubleshooting

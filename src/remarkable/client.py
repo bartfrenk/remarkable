@@ -94,15 +94,30 @@ class RemarkableClient:
     async def register(self, otp: str) -> None:
         await self.auth.register(otp)
 
-    async def upload_pdf(self, path: str | Path, name: str | None = None) -> str:
+    async def upload_pdf(
+        self, path: str | Path, name: str | None = None, folder: str | None = None
+    ) -> str:
         path = Path(path)
         doc = Document(name or path.stem, path.read_bytes(), "application/pdf")
-        return await self.upload_document(doc)
+        return await self.upload_document(doc, folder)
 
-    async def upload_document(self, doc: Document) -> str:
+    async def upload_document(self, doc: Document, folder: str | None = None) -> str:
+        """Upload `doc` to the root, then move it into `folder` (a path) if given."""
+        folder_id = await self._resolve_folder(folder) if folder else None
+
         doc_id = await self.api.upload(doc.name, doc.data, doc.mime_type)
         log.info("Uploaded %r as document %s", doc.name, doc_id)
+
+        if folder_id is not None:
+            await self._update_metadata(doc_id, {"parent": folder_id})
+            log.info("Moved %r into %r", doc.name, folder)
         return doc_id
+
+    async def _resolve_folder(self, path: str) -> str:
+        entry = resolve_path(await self.list_documents(), path)
+        if entry.type != "CollectionType":
+            raise DocumentNotFoundError(f"{path!r} is not a folder")
+        return entry.id
 
     async def list_documents(self) -> list[DocumentEntry]:
         root = await self.api.get_root()
