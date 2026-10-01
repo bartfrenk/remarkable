@@ -2,7 +2,8 @@
 
 `aioresponses` is incompatible with aiohttp >= 3.14, so tests register canned
 responses on `FakeSession` and inspect the requests it recorded instead.
-`add_library` serves a one-document library ("/MyDoc") over the sync API.
+`add_library` serves a one-document library ("/MyDoc") over the sync API;
+`add_documents` serves arbitrary documents and folders.
 """
 
 from __future__ import annotations
@@ -187,3 +188,40 @@ def uploaded_blobs(session: FakeSession) -> dict[str, tuple[str, bytes]]:
             assert r.data is not None
             blobs[r.headers["rm-filename"]] = (r.url.rsplit("/", 1)[1], r.data)
     return blobs
+
+
+def _flat_hash(name: str) -> str:
+    return hashlib.sha256(name.encode()).hexdigest()
+
+
+def _flat_index_text(id: str, entries: list[tuple[str, str]]) -> str:
+    lines = ["4", f"0:{id}:{len(entries)}:{10 * len(entries)}"]
+    lines += [f"{hash}:0:{entry_id}:1:10" for hash, entry_id in entries]
+    return "\n".join(lines) + "\n"
+
+
+def add_documents(session: FakeSession, docs: dict[str, dict[str, str]]) -> None:
+    """A schema 4 library holding `docs` (id -> metadata), served as often as asked."""
+    session.add(
+        "GET",
+        f"{RAW_HOST}/sync/v4/root",
+        payload={"hash": _flat_hash("root"), "generation": 7, "schemaVersion": 4},
+        repeat=True,
+    )
+    session.add(
+        "GET",
+        f"{FILES_URL}/{_flat_hash('root')}",
+        body=_flat_index_text(".", [(_flat_hash(id), id) for id in docs]),
+        repeat=True,
+    )
+    for id, meta in docs.items():
+        session.add(
+            "GET",
+            f"{FILES_URL}/{_flat_hash(id)}",
+            body=_flat_index_text(id, [(_flat_hash(f"{id}.metadata"), f"{id}.metadata")]),
+            repeat=True,
+        )
+        session.add(
+            "GET", f"{FILES_URL}/{_flat_hash(f'{id}.metadata')}", payload=meta, repeat=True
+        )
+    session.add("PUT", f"{FILES_URL}/*", repeat=True)

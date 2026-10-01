@@ -1,13 +1,12 @@
 import base64
-import hashlib
 import json
 
 import pytest
 
 from remarkable.client import Document
 from remarkable.exceptions import DocumentNotFoundError
-from remarkable.sync import RAW_HOST, UPLOAD_URL
-from tests.conftest import FakeSession, make_client
+from remarkable.sync import UPLOAD_URL
+from tests.conftest import ROOT_PUT_URL, FakeSession, add_documents, make_client
 
 
 async def test_upload_document_sends_expected_request_and_parses_doc_id(session: FakeSession):
@@ -42,47 +41,10 @@ async def test_upload_document_retries_with_fresh_token_on_401(session: FakeSess
 
 
 FOLDER_ID = "folder-uuid"
-FILES_URL = f"{RAW_HOST}/sync/v3/files"
-ROOT_PUT_URL = f"{RAW_HOST}/sync/v3/root"
-
-
-def _hash(name: str) -> str:
-    return hashlib.sha256(name.encode()).hexdigest()
-
-
-def _index_text(id: str, entries: list[tuple[str, str]]) -> str:
-    lines = ["4", f"0:{id}:{len(entries)}:{10 * len(entries)}"]
-    lines += [f"{hash}:0:{entry_id}:1:10" for hash, entry_id in entries]
-    return "\n".join(lines) + "\n"
-
-
-def _add_library(session: FakeSession, docs: dict[str, dict[str, str]]) -> None:
-    """A schema 4 library holding `docs` (id -> metadata), served as often as asked."""
-    session.add(
-        "GET",
-        f"{RAW_HOST}/sync/v4/root",
-        payload={"hash": _hash("root"), "generation": 7, "schemaVersion": 4},
-        repeat=True,
-    )
-    session.add(
-        "GET",
-        f"{FILES_URL}/{_hash('root')}",
-        body=_index_text(".", [(_hash(id), id) for id in docs]),
-        repeat=True,
-    )
-    for id, meta in docs.items():
-        session.add(
-            "GET",
-            f"{FILES_URL}/{_hash(id)}",
-            body=_index_text(id, [(_hash(f"{id}.metadata"), f"{id}.metadata")]),
-            repeat=True,
-        )
-        session.add("GET", f"{FILES_URL}/{_hash(f'{id}.metadata')}", payload=meta, repeat=True)
-    session.add("PUT", f"{FILES_URL}/*", repeat=True)
 
 
 async def test_upload_document_into_folder_moves_it_after_upload(session: FakeSession):
-    _add_library(
+    add_documents(
         session,
         {
             FOLDER_ID: {"visibleName": "Work", "parent": "", "type": "CollectionType"},
@@ -107,7 +69,7 @@ async def test_upload_document_into_folder_moves_it_after_upload(session: FakeSe
 
 
 async def test_upload_document_into_missing_folder_uploads_nothing(session: FakeSession):
-    _add_library(session, {})
+    add_documents(session, {})
 
     client = make_client(session, ["usertoken"])
     with pytest.raises(DocumentNotFoundError):

@@ -107,20 +107,26 @@ class RemarkableClient:
         doc = Document(name or path.stem, path.read_bytes(), "application/pdf")
         return await self.upload_document(doc, folder)
 
-    async def replace_pdf(self, path: str | Path, name: str | None = None) -> Replacement:
-        """Upload a PDF and trash any root-level document with the same name.
+    async def replace_pdf(
+        self, path: str | Path, name: str | None = None, folder: str | None = None
+    ) -> Replacement:
+        """Upload a PDF and trash any document with the same name in `folder` (default: root).
 
         The new document is uploaded before the old one is trashed, so a failure
         never leaves the library without either version.
         """
         path = Path(path)
         doc = Document(name or path.stem, path.read_bytes(), "application/pdf")
+        entries = await self.list_documents()
+        folder_id = resolve_folder(entries, folder) if folder else None
         existing = [
             e
-            for e in await self.list_documents()
-            if e.parent == "" and e.visible_name == doc.name and e.type == "DocumentType"
+            for e in entries
+            if e.parent == (folder_id or "")
+            and e.visible_name == doc.name
+            and e.type == "DocumentType"
         ]
-        doc_id = await self.upload_document(doc)
+        doc_id = await self._upload(doc, folder_id)
         for entry in existing:
             await self._update_metadata(entry.id, {"parent": TRASH_ID})
             log.info("Moved previous %r (%s) to the trash", doc.name, entry.id)
@@ -128,21 +134,17 @@ class RemarkableClient:
 
     async def upload_document(self, doc: Document, folder: str | None = None) -> str:
         """Upload `doc` to the root, then move it into `folder` (a path) if given."""
-        folder_id = await self._resolve_folder(folder) if folder else None
+        folder_id = resolve_folder(await self.list_documents(), folder) if folder else None
+        return await self._upload(doc, folder_id)
 
+    async def _upload(self, doc: Document, folder_id: str | None) -> str:
         doc_id = await self.api.upload(doc.name, doc.data, doc.mime_type)
         log.info("Uploaded %r as document %s", doc.name, doc_id)
 
         if folder_id is not None:
             await self._update_metadata(doc_id, {"parent": folder_id})
-            log.info("Moved %r into %r", doc.name, folder)
+            log.info("Moved %r into folder %s", doc.name, folder_id)
         return doc_id
-
-    async def _resolve_folder(self, path: str) -> str:
-        entry = resolve_path(await self.list_documents(), path)
-        if entry.type != "CollectionType":
-            raise DocumentNotFoundError(f"{path!r} is not a folder")
-        return entry.id
 
     async def list_documents(self) -> list[DocumentEntry]:
         root = await self.api.get_root()
@@ -268,3 +270,10 @@ def resolve_path(entries: list[DocumentEntry], path: str) -> DocumentEntry:
 
     assert entry is not None
     return entry
+
+
+def resolve_folder(entries: list[DocumentEntry], path: str) -> str:
+    entry = resolve_path(entries, path)
+    if entry.type != "CollectionType":
+        raise DocumentNotFoundError(f"{path!r} is not a folder")
+    return entry.id

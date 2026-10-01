@@ -1,11 +1,13 @@
 import json
 from pathlib import Path
 
+from remarkable.client import Replacement
 from remarkable.sync import UPLOAD_URL
 from tests.conftest import (
     DOC_ID,
     ROOT_PUT_URL,
     FakeSession,
+    add_documents,
     add_library,
     make_client,
     uploaded_blobs,
@@ -44,3 +46,36 @@ async def test_replace_only_uploads_when_no_document_has_the_name(
     assert result.doc_id == "new-uuid"
     assert result.trashed_ids == []
     assert [r.method for r in session.requests if r.method != "GET"] == ["POST"]
+
+
+async def test_replace_in_folder_trashes_only_the_document_in_that_folder(
+    session: FakeSession, tmp_path: Path
+):
+    add_documents(
+        session,
+        {
+            "folder-uuid": {"visibleName": "Work", "parent": "", "type": "CollectionType"},
+            "old-in-folder": {
+                "visibleName": "report",
+                "parent": "folder-uuid",
+                "type": "DocumentType",
+            },
+            "old-in-root": {"visibleName": "report", "parent": "", "type": "DocumentType"},
+            # The cloud lists the new upload in the root until it is moved.
+            "new-uuid": {"visibleName": "report", "parent": "", "type": "DocumentType"},
+        },
+    )
+    session.add("POST", UPLOAD_URL, payload={"docID": "new-uuid"})
+    session.add("PUT", ROOT_PUT_URL, payload={"hash": "new", "generation": 8}, repeat=True)
+    pdf = tmp_path / "report.pdf"
+    pdf.write_bytes(b"%PDF")
+
+    result = await make_client(session, ["usertoken"]).replace_pdf(pdf, folder="/Work")
+
+    assert result == Replacement("new-uuid", ["old-in-folder"])
+    parents = {
+        r.headers["rm-filename"]: json.loads(r.data or b"")["parent"]
+        for r in session.requests
+        if r.method == "PUT" and r.headers.get("rm-filename", "").endswith(".metadata")
+    }
+    assert parents == {"new-uuid.metadata": "folder-uuid", "old-in-folder.metadata": "trash"}

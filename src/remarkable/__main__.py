@@ -29,6 +29,7 @@ def main() -> None:
     )
     replace.add_argument("files", nargs="+", help="Path(s) to PDF file(s)")
     replace.add_argument("--name", help="Visible name (only valid with a single file)")
+    replace.add_argument("--folder", help="Existing folder to replace in, e.g. /Notes")
 
     download = sub.add_parser("download", help="Download a document by its reMarkable path")
     download.add_argument("path", help="reMarkable path, e.g. /Notes/MyDoc")
@@ -66,7 +67,7 @@ async def _run(args: argparse.Namespace) -> None:
                 print(f"Uploaded {f} -> document {doc_id}")
         elif args.command == "replace":
             for f in args.files:
-                result = await client.replace_pdf(f, name=args.name)
+                result = await client.replace_pdf(f, name=args.name, folder=args.folder)
                 verb = "Replaced" if result.trashed_ids else "Uploaded"
                 print(f"{verb} {f} -> document {result.doc_id}")
         elif args.command == "download":
