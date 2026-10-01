@@ -2,10 +2,12 @@
 
 `aioresponses` is incompatible with aiohttp >= 3.14, so tests register canned
 responses on `FakeSession` and inspect the requests it recorded instead.
+`add_library` serves a one-document library ("/MyDoc") over the sync API.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
@@ -15,6 +17,7 @@ import aiohttp
 import pytest
 
 from remarkable.client import RemarkableClient
+from remarkable.sync import RAW_HOST
 
 
 @dataclass
@@ -125,3 +128,62 @@ def make_client(session: FakeSession, tokens: list[str]) -> RemarkableClient:
 
     client.auth.get_user_token = get_user_token  # type: ignore[method-assign]
     return client
+
+
+DOC_ID = "doc-uuid"
+ROOT_HASH = hashlib.sha256(b"root").hexdigest()
+DOC_HASH = hashlib.sha256(b"doc").hexdigest()
+META_HASH = hashlib.sha256(b"meta").hexdigest()
+PDF_HASH = hashlib.sha256(b"pdf").hexdigest()
+FILES_URL = f"{RAW_HOST}/sync/v3/files"
+ROOT_PUT_URL = f"{RAW_HOST}/sync/v3/root"
+
+
+def index_text(id: str, entries: list[tuple[str, str, int, int]], schema: int) -> str:
+    lines = [str(schema)]
+    if schema == 4:
+        lines.append(f"0:{id}:{len(entries)}:{sum(size for *_, size in entries)}")
+    lines += [f"{hash}:0:{id}:{subfiles}:{size}" for hash, id, subfiles, size in entries]
+    return "\n".join(lines) + "\n"
+
+
+def add_library(session: FakeSession, schema: int, generations: list[int]) -> None:
+    for generation in generations:
+        session.add(
+            "GET",
+            f"{RAW_HOST}/sync/v4/root",
+            payload={"hash": ROOT_HASH, "generation": generation, "schemaVersion": schema},
+        )
+    session.add(
+        "GET",
+        f"{FILES_URL}/{ROOT_HASH}",
+        body=index_text(".", [(DOC_HASH, DOC_ID, 2, 110)], schema),
+        repeat=True,
+    )
+    session.add(
+        "GET",
+        f"{FILES_URL}/{DOC_HASH}",
+        body=index_text(
+            DOC_ID,
+            [(META_HASH, f"{DOC_ID}.metadata", 0, 10), (PDF_HASH, f"{DOC_ID}.pdf", 0, 100)],
+            schema,
+        ),
+        repeat=True,
+    )
+    session.add(
+        "GET",
+        f"{FILES_URL}/{META_HASH}",
+        payload={"visibleName": "MyDoc", "parent": "", "type": "DocumentType", "version": 2},
+        repeat=True,
+    )
+    session.add("PUT", f"{FILES_URL}/*", repeat=True)
+
+
+def uploaded_blobs(session: FakeSession) -> dict[str, tuple[str, bytes]]:
+    """Uploaded (hash, bytes) by rm-filename."""
+    blobs: dict[str, tuple[str, bytes]] = {}
+    for r in session.requests:
+        if r.method == "PUT" and r.url.startswith(FILES_URL):
+            assert r.data is not None
+            blobs[r.headers["rm-filename"]] = (r.url.rsplit("/", 1)[1], r.data)
+    return blobs

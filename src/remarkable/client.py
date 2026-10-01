@@ -51,6 +51,12 @@ class DocumentEntry:
     type: EntryType
 
 
+@dataclass(frozen=True, slots=True)
+class Replacement:
+    doc_id: str
+    trashed_ids: list[str]
+
+
 @final
 class RemarkableClient:
     """Async client for the reMarkable Cloud.
@@ -100,6 +106,25 @@ class RemarkableClient:
         path = Path(path)
         doc = Document(name or path.stem, path.read_bytes(), "application/pdf")
         return await self.upload_document(doc, folder)
+
+    async def replace_pdf(self, path: str | Path, name: str | None = None) -> Replacement:
+        """Upload a PDF and trash any root-level document with the same name.
+
+        The new document is uploaded before the old one is trashed, so a failure
+        never leaves the library without either version.
+        """
+        path = Path(path)
+        doc = Document(name or path.stem, path.read_bytes(), "application/pdf")
+        existing = [
+            e
+            for e in await self.list_documents()
+            if e.parent == "" and e.visible_name == doc.name and e.type == "DocumentType"
+        ]
+        doc_id = await self.upload_document(doc)
+        for entry in existing:
+            await self._update_metadata(entry.id, {"parent": TRASH_ID})
+            log.info("Moved previous %r (%s) to the trash", doc.name, entry.id)
+        return Replacement(doc_id, [e.id for e in existing])
 
     async def upload_document(self, doc: Document, folder: str | None = None) -> str:
         """Upload `doc` to the root, then move it into `folder` (a path) if given."""

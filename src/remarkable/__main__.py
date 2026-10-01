@@ -24,6 +24,12 @@ def main() -> None:
     upload.add_argument("--name", help="Visible name (only valid with a single file)")
     upload.add_argument("--folder", help="Existing folder to upload into, e.g. /Notes")
 
+    replace = sub.add_parser(
+        "replace", help="Upload PDFs, trashing any existing document with the same name"
+    )
+    replace.add_argument("files", nargs="+", help="Path(s) to PDF file(s)")
+    replace.add_argument("--name", help="Visible name (only valid with a single file)")
+
     download = sub.add_parser("download", help="Download a document by its reMarkable path")
     download.add_argument("path", help="reMarkable path, e.g. /Notes/MyDoc")
     download.add_argument(
@@ -39,7 +45,7 @@ def main() -> None:
         format="%(levelname)s %(name)s: %(message)s",
     )
 
-    if args.command == "upload" and args.name and len(args.files) > 1:
+    if args.command in ("upload", "replace") and args.name and len(args.files) > 1:
         parser.error("--name can only be used with a single file")
 
     try:
@@ -58,6 +64,11 @@ async def _run(args: argparse.Namespace) -> None:
             for f in args.files:
                 doc_id = await client.upload_pdf(f, name=args.name, folder=args.folder)
                 print(f"Uploaded {f} -> document {doc_id}")
+        elif args.command == "replace":
+            for f in args.files:
+                result = await client.replace_pdf(f, name=args.name)
+                verb = "Replaced" if result.trashed_ids else "Uploaded"
+                print(f"{verb} {f} -> document {result.doc_id}")
         elif args.command == "download":
             dest = await client.download(args.path, args.output)
             print(f"Downloaded {args.path} -> {dest}")

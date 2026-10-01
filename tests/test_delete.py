@@ -4,76 +4,26 @@ import json
 import pytest
 
 from remarkable.exceptions import GenerationConflictError
-from remarkable.sync import RAW_HOST, crc32c, parse_entries
-from tests.conftest import FakeSession, make_client
-
-DOC_ID = "doc-uuid"
-ROOT_HASH = hashlib.sha256(b"root").hexdigest()
-DOC_HASH = hashlib.sha256(b"doc").hexdigest()
-META_HASH = hashlib.sha256(b"meta").hexdigest()
-PDF_HASH = hashlib.sha256(b"pdf").hexdigest()
-FILES_URL = f"{RAW_HOST}/sync/v3/files"
-ROOT_PUT_URL = f"{RAW_HOST}/sync/v3/root"
-
-
-def _index_text(id: str, entries: list[tuple[str, str, int, int]], schema: int) -> str:
-    lines = [str(schema)]
-    if schema == 4:
-        lines.append(f"0:{id}:{len(entries)}:{sum(size for *_, size in entries)}")
-    lines += [f"{hash}:0:{id}:{subfiles}:{size}" for hash, id, subfiles, size in entries]
-    return "\n".join(lines) + "\n"
-
-
-def _add_library(session: FakeSession, schema: int, generations: list[int]) -> None:
-    for generation in generations:
-        session.add(
-            "GET",
-            f"{RAW_HOST}/sync/v4/root",
-            payload={"hash": ROOT_HASH, "generation": generation, "schemaVersion": schema},
-        )
-    session.add(
-        "GET",
-        f"{FILES_URL}/{ROOT_HASH}",
-        body=_index_text(".", [(DOC_HASH, DOC_ID, 2, 110)], schema),
-        repeat=True,
-    )
-    session.add(
-        "GET",
-        f"{FILES_URL}/{DOC_HASH}",
-        body=_index_text(
-            DOC_ID,
-            [(META_HASH, f"{DOC_ID}.metadata", 0, 10), (PDF_HASH, f"{DOC_ID}.pdf", 0, 100)],
-            schema,
-        ),
-        repeat=True,
-    )
-    session.add(
-        "GET",
-        f"{FILES_URL}/{META_HASH}",
-        payload={"visibleName": "MyDoc", "parent": "", "type": "DocumentType", "version": 2},
-        repeat=True,
-    )
-    session.add("PUT", f"{FILES_URL}/*", repeat=True)
-
-
-def _uploads(session: FakeSession) -> dict[str, tuple[str, bytes]]:
-    """Uploaded (hash, bytes) by rm-filename."""
-    blobs: dict[str, tuple[str, bytes]] = {}
-    for r in session.requests:
-        if r.method == "PUT" and r.url.startswith(FILES_URL):
-            assert r.data is not None
-            blobs[r.headers["rm-filename"]] = (r.url.rsplit("/", 1)[1], r.data)
-    return blobs
+from remarkable.sync import crc32c, parse_entries
+from tests.conftest import (
+    DOC_ID,
+    PDF_HASH,
+    ROOT_PUT_URL,
+    FakeSession,
+    add_library,
+    make_client,
+    uploaded_blobs,
+)
 
 
 @pytest.mark.parametrize("schema", [3, 4])
 async def test_delete_moves_document_to_trash(session: FakeSession, schema: int):
-    _add_library(session, schema, generations=[7, 7])
+    add_library(session, schema, generations=[7, 7])
     session.add("PUT", ROOT_PUT_URL, payload={"hash": "new", "generation": 8})
 
     await make_client(session, ["usertoken"]).delete("/MyDoc")
 
-    blobs = _uploads(session)
+    blobs = uploaded_blobs(session)
     meta_hash, meta_blob = blobs[f"{DOC_ID}.metadata"]
     doc_hash, doc_blob = blobs[f"{DOC_ID}.docSchema"]
     root_hash, root_blob = blobs["root.docSchema"]
@@ -113,7 +63,7 @@ async def test_delete_moves_document_to_trash(session: FakeSession, schema: int)
 
 
 async def test_delete_retries_when_root_changes_concurrently(session: FakeSession):
-    _add_library(session, 4, generations=[7, 7, 9])
+    add_library(session, 4, generations=[7, 7, 9])
     session.add("PUT", ROOT_PUT_URL, status=412, body='{"message":"precondition failed"}\n')
     session.add("PUT", ROOT_PUT_URL, payload={"hash": "new", "generation": 10})
 
@@ -124,7 +74,7 @@ async def test_delete_retries_when_root_changes_concurrently(session: FakeSessio
 
 
 async def test_delete_gives_up_after_repeated_conflicts(session: FakeSession):
-    _add_library(session, 4, generations=[1, 2, 3, 4])
+    add_library(session, 4, generations=[1, 2, 3, 4])
     session.add("PUT", ROOT_PUT_URL, status=412, repeat=True)
 
     with pytest.raises(GenerationConflictError):
