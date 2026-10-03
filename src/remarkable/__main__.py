@@ -40,8 +40,7 @@ def main() -> None:
         "-f",
         "--format",
         choices=["rm", "pdf"],
-        help="Force the output format (default: 'rm' for notebooks, 'pdf' for PDFs; "
-        "only notebooks are affected by this flag)",
+        help="Output format for notebooks (default: rm)",
     )
 
     delete = sub.add_parser("delete", help="Move documents or folders to the trash")
