@@ -11,6 +11,10 @@ requires-python = ">=3.12"
 dependencies = [
     "aiohttp>=3.13.5",
     "pydantic>=2.13.4",
+    "reportlab>=5.0.1",
+    "rmc>=0.3.0",
+    "rmscene>=0.6.1",
+    "svglib>=2.2.0",
 ]
 
 

@@ -11,6 +11,12 @@ from types import TracebackType
 from typing import Literal, Self, final
 
 import aiohttp
+import rmscene
+from reportlab.graphics import renderPDF
+from reportlab.graphics.shapes import Drawing
+from reportlab.pdfgen import canvas as pdfcanvas
+from rmc.exporters import svg as rmc_svg
+from svglib.svglib import svg2rlg
 
 from remarkable.auth import DEFAULT_CREDENTIALS_PATH, Auth
 from remarkable.exceptions import (
@@ -176,9 +182,54 @@ class RemarkableClient:
             ) from exc
 
     async def download(self, path: str, dest: str | Path | None = None) -> Path:
-        entry = resolve_path(await self.list_documents(), path)
-        data, ext = await self._download_blob(entry)
+        """Download a document, keeping its native format.
 
+        PDF and EPUB documents download as-is. Native notebooks, which have
+        no rendered payload, download as a `.rmdoc` archive (see
+        `download_notebook`).
+        """
+        entry = resolve_path(await self.list_documents(), path)
+        parts = await self._get_parts(entry)
+        for ext in ("pdf", "epub"):
+            part = _find_part(parts, ext)
+            if part is not None:
+                data = await self.api.get_bytes(part.id, part.hash)
+                return self._write(path, entry, data, ext, dest)
+
+        data = await self._bundle_rmdoc(parts)
+        return self._write(path, entry, data, "rmdoc", dest)
+
+    async def download_pdf(self, path: str, dest: str | Path | None = None) -> Path:
+        """Download a document as PDF.
+
+        Documents with a PDF part download as-is. Native notebooks, which
+        have no PDF payload, are rendered page-by-page from their `.rm`
+        strokes.
+        """
+        entry = resolve_path(await self.list_documents(), path)
+        parts = await self._get_parts(entry)
+        part = _find_part(parts, "pdf")
+        if part is not None:
+            data = await self.api.get_bytes(part.id, part.hash)
+        else:
+            data = await self._render_notebook(entry.id, parts)
+        return self._write(path, entry, data, "pdf", dest)
+
+    async def download_notebook(self, path: str, dest: str | Path | None = None) -> Path:
+        """Download a document's raw sync parts bundled as a `.rmdoc` archive.
+
+        `.rmdoc` is reMarkable's own backup/archive format: a zip of the
+        document's `.content`, `.metadata`, `.pagedata` and per-page `.rm`
+        files, keyed by the same ids used on the sync API.
+        """
+        entry = resolve_path(await self.list_documents(), path)
+        parts = await self._get_parts(entry)
+        data = await self._bundle_rmdoc(parts)
+        return self._write(path, entry, data, "rmdoc", dest)
+
+    def _write(
+        self, path: str, entry: DocumentEntry, data: bytes, ext: str, dest: str | Path | None
+    ) -> Path:
         out = Path(dest) if dest is not None else Path(f"{entry.visible_name}.{ext}")
         out.write_bytes(data)
         log.info("Downloaded %r (%d bytes) to %s", path, len(data), out)
@@ -235,17 +286,51 @@ class RemarkableClient:
         parts[index] = await self.api.put_bytes(meta_part.id, data)
         return await self.api.put_entries(entry.id, parts, schema_version)
 
-    async def _download_blob(self, entry: DocumentEntry) -> tuple[bytes, str]:
+    async def _get_parts(self, entry: DocumentEntry) -> list[RawEntry]:
         if entry.type != "DocumentType":
             raise DocumentNotFoundError(f"{entry.visible_name!r} is a folder, not a document")
+        return await self.api.get_entries(f"{entry.id}.docSchema", entry.hash)
 
-        parts = await self.api.get_entries(f"{entry.id}.docSchema", entry.hash)
-        for ext in ("pdf", "epub"):
-            part = next((p for p in parts if p.id.endswith(f".{ext}")), None)
-            if part is not None:
-                return await self.api.get_bytes(part.id, part.hash), ext
+    async def _render_notebook(self, doc_id: str, parts: list[RawEntry]) -> bytes:
+        """Render a native notebook's pages to a single PDF.
 
-        return await self._bundle_rmdoc(parts), "rmdoc"
+        Reads the page order from `.content` (preferring the modern `cPages`
+        list, falling back to the legacy flat `pages` list, same as
+        rmapi-js's `pageOrder`), then renders each page's `.rm` strokes to
+        SVG via `rmscene`/`rmc` and composites the pages into one PDF with
+        svglib/reportlab. `rmc`'s own PDF export shells out to Inkscape,
+        which we avoid by rendering through reportlab directly.
+        """
+        content_part = _find_part(parts, "content")
+        if content_part is None:
+            raise SyncProtocolError(f"Document {doc_id} has no .content file")
+        raw_content = await self.api.get_text(content_part.id, content_part.hash)
+        page_ids: list[str]
+        try:
+            content = json.loads(raw_content)
+            c_pages = content.get("cPages")
+            if c_pages:
+                # Modern schema: ordered pages, any carrying a "deleted" key are gone.
+                page_ids = [p["id"] for p in c_pages["pages"] if "deleted" not in p]
+            else:
+                # Legacy schema: a flat, already-ordered list of page ids.
+                page_ids = content.get("pages") or []
+        except (ValueError, KeyError, TypeError) as exc:
+            raise SyncProtocolError(
+                f"Unexpected .content shape for {doc_id}: {raw_content[:300]}"
+            ) from exc
+
+        by_id = {part.id: part for part in parts}
+        page_parts = [
+            by_id[page_file_id]
+            for page_id in page_ids
+            if (page_file_id := f"{doc_id}/{page_id}.rm") in by_id
+        ]
+        if not page_parts:
+            raise DocumentNotFoundError(f"Document {doc_id} has no renderable pages")
+
+        pages = await asyncio.gather(*(self.api.get_bytes(p.id, p.hash) for p in page_parts))
+        return await asyncio.to_thread(_render_pdf, pages)
 
     async def _bundle_rmdoc(self, parts: list[RawEntry]) -> bytes:
         """Zip a document's raw parts into a `.rmdoc` archive.
@@ -261,6 +346,33 @@ class RemarkableClient:
             for part, data in zip(parts, contents):
                 archive.writestr(part.id, data)
         return buffer.getvalue()
+
+
+def _find_part(parts: list[RawEntry], ext: str) -> RawEntry | None:
+    return next((p for p in parts if p.id.endswith(f".{ext}")), None)
+
+
+def _render_pdf(pages: list[bytes]) -> bytes:
+    """Render a notebook's pages (raw `.rm` bytes, in order) to a PDF."""
+    drawings = [_page_drawing(data) for data in pages]
+    buffer = io.BytesIO()
+    canvas_ = pdfcanvas.Canvas(buffer, pagesize=(drawings[0].width, drawings[0].height))
+    for drawing in drawings:
+        canvas_.setPageSize((drawing.width, drawing.height))
+        renderPDF.draw(drawing, canvas_, 0, 0)
+        canvas_.showPage()
+    canvas_.save()
+    return buffer.getvalue()
+
+
+def _page_drawing(data: bytes) -> Drawing:
+    tree = rmscene.read_tree(io.BytesIO(data))
+    svg_text = io.StringIO()
+    rmc_svg.tree_to_svg(tree, svg_text)  # pyright: ignore[reportUnknownMemberType]
+    drawing = svg2rlg(io.BytesIO(svg_text.getvalue().encode("utf-8")))
+    if drawing is None:
+        raise SyncProtocolError("Could not parse rendered notebook page SVG")
+    return drawing
 
 
 def resolve_path(entries: list[DocumentEntry], path: str) -> DocumentEntry:

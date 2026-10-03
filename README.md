@@ -31,11 +31,15 @@ async with RemarkableClient() as client:
     doc_id = await client.upload_pdf("report.pdf", name="Q3 Report")
     await client.replace_pdf("report.pdf")
     path = await client.download("/Notes/MyDoc")
+    path = await client.download_pdf("/Notes/MyHandwrittenNotebook")
+    path = await client.download_notebook("/Notes/MyHandwrittenNotebook")
     await client.delete("/Notes/MyDoc")
 ```
 
-Uploads go to the root folder unless `--folder` is given. PDF and EPUB documents download as-is; native
-notebooks (no PDF/EPUB payload) download as a `.rmdoc` archive, reMarkable's own backup format.
+Uploads go to the root folder unless `--folder` is given. `download` keeps a document's native format:
+PDF/EPUB as-is, native notebooks as a `.rmdoc` archive (reMarkable's own backup format). `download_pdf`
+always produces a PDF, rendering a notebook's handwritten pages if it has no PDF payload.
+`download_notebook` always produces the raw `.rmdoc` archive, regardless of document kind.
 
 ## Troubleshooting
 
