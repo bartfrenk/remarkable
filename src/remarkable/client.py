@@ -16,6 +16,8 @@ from reportlab.graphics import renderPDF
 from reportlab.graphics.shapes import Drawing
 from reportlab.pdfgen import canvas as pdfcanvas
 from rmc.exporters import svg as rmc_svg
+from rmc.exporters import writing_tools as rmc_writing_tools
+from rmscene.scene_items import PenColor
 from svglib.svglib import svg2rlg
 
 from remarkable.auth import DEFAULT_CREDENTIALS_PATH, Auth
@@ -28,6 +30,11 @@ from remarkable.exceptions import (
 from remarkable.sync import ROOT_ID, RawEntry, SyncApi
 
 log = logging.getLogger(__name__)
+
+# rmc's own color palette is missing the highlighter color, which crashes
+# rendering (KeyError: 9) for any notebook with a highlighted stroke. Fixed
+# upstream in https://github.com/ricklupton/rmc/pull/45, but unmerged.
+rmc_writing_tools.RM_PALETTE.setdefault(PenColor.HIGHLIGHT, (251, 247, 25))
 
 
 MimeType = Literal["application/pdf", "application/epub+zip"]

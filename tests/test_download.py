@@ -4,6 +4,10 @@ from pathlib import Path
 
 import pytest
 import rmscene
+from rmscene import scene_items as si
+from rmscene.crdt_sequence import CrdtSequenceItem
+from rmscene.scene_tree import ROOT_ID as RM_ROOT_ID
+from rmscene.tagged_block_common import CrdtId
 
 from remarkable.exceptions import UnsupportedFormatError
 from remarkable.sync import RAW_HOST
@@ -286,6 +290,93 @@ async def test_download_pdf_renders_native_notebook(session: FakeSession, tmp_pa
 
     page_request = next(r for r in session.requests if r.url.endswith(f"/{page_hash}"))
     assert page_request.headers["rm-filename"] == page_rm_id
+
+
+def _highlighter_stroke_page() -> bytes:
+    """A real serialized v6 `.rm` page with a single highlighted stroke.
+
+    `PenColor.HIGHLIGHT` strokes crash rmc's renderer unless its color
+    palette is patched (see the `RM_PALETTE.setdefault` in client.py); this
+    reproduces that shape so the patch has a regression test.
+    """
+    line = si.Line(
+        color=si.PenColor.HIGHLIGHT,
+        tool=si.Pen.HIGHLIGHTER_1,
+        points=[
+            si.Point(x=0, y=0, speed=0, direction=0, width=10, pressure=100),
+            si.Point(x=10, y=10, speed=0, direction=0, width=10, pressure=100),
+        ],
+        thickness_scale=1.0,
+        starting_length=0.0,
+    )
+    item = CrdtSequenceItem(
+        item_id=CrdtId(1, 2),
+        left_id=CrdtId(0, 0),
+        right_id=CrdtId(0, 0),
+        deleted_length=0,
+        value=line,
+    )
+    block = rmscene.SceneLineItemBlock(
+        extra_data=b"", parent_id=RM_ROOT_ID, item=item, extra_value_data=b""
+    )
+    buffer = io.BytesIO()
+    rmscene.write_blocks(buffer, [block])  # pyright: ignore[reportUnknownMemberType]
+    return buffer.getvalue()
+
+
+async def test_download_pdf_renders_highlighted_notebook(session: FakeSession, tmp_path: Path):
+    """A page with a highlighter stroke must not crash rendering (regression, KeyError: 9)."""
+    page_bytes = _highlighter_stroke_page()
+
+    content_hash, page_hash = "content-hash", "page-hash"
+    page_rm_id = f"{DOC_ID}/page-uuid.rm"
+
+    session.add(
+        "GET",
+        f"{RAW_HOST}/sync/v4/root",
+        payload={"hash": ROOT_HASH, "generation": 1, "schemaVersion": 3},
+    )
+    session.add(
+        "GET",
+        f"{RAW_HOST}/sync/v3/files/{ROOT_HASH}",
+        body=_index_text([(DOC_HASH, DOC_ID, 3, 0)]),
+    )
+    session.add(
+        "GET",
+        f"{RAW_HOST}/sync/v3/files/{DOC_HASH}",
+        body=_index_text(
+            [
+                (META_HASH, f"{DOC_ID}.metadata", 0, 0),
+                (content_hash, f"{DOC_ID}.content", 0, 0),
+                (page_hash, page_rm_id, 0, 0),
+            ]
+        ),
+        repeat=True,
+    )
+    session.add(
+        "GET",
+        f"{RAW_HOST}/sync/v3/files/{META_HASH}",
+        payload={
+            "visibleName": "MyNotebook",
+            "parent": "",
+            "type": "DocumentType",
+            "lastModified": "0",
+            "pinned": False,
+        },
+    )
+    session.add(
+        "GET",
+        f"{RAW_HOST}/sync/v3/files/{content_hash}",
+        payload={"cPages": {"pages": [{"id": "page-uuid"}]}},
+    )
+    session.add("GET", f"{RAW_HOST}/sync/v3/files/{page_hash}", body=page_bytes)
+
+    client = make_client(session, ["usertoken"])
+    dest = tmp_path / "out.pdf"
+    result = await client.download_pdf("/MyNotebook", dest)
+
+    assert result == dest
+    assert dest.read_bytes().startswith(b"%PDF-")
 
 
 async def test_download_format_rm_bundles_notebook(session: FakeSession, tmp_path: Path):
