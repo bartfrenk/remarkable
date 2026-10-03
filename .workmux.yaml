@@ -1,0 +1,6 @@
+post_create:
+  - direnv allow
+files:
+  copy:
+    - .envrc
+    - config.yaml
