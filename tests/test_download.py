@@ -2,8 +2,10 @@ import io
 import zipfile
 from pathlib import Path
 
+import pypdf
 import pytest
 import rmscene
+from reportlab.pdfgen import canvas as pdfcanvas
 from rmscene import scene_items as si
 from rmscene.crdt_sequence import CrdtSequenceItem
 from rmscene.scene_tree import ROOT_ID as RM_ROOT_ID
@@ -535,3 +537,95 @@ async def test_download_format_rm_fails_for_pdf_document(session: FakeSession, t
         await client.download("/MyDoc", dest, fmt="rm")
 
     assert not dest.exists()
+
+
+def _one_page_pdf() -> bytes:
+    buffer = io.BytesIO()
+    c = pdfcanvas.Canvas(buffer, pagesize=(612, 792))
+    c.drawString(72, 700, "base page")
+    c.save()
+    return buffer.getvalue()
+
+
+async def _setup_pdf_with_content(
+    session: FakeSession, *, page_ids: list[str], annotated_page_ids: set[str], pdf_bytes: bytes
+) -> None:
+    content_hash = "content-hash"
+    entries = [
+        (META_HASH, f"{DOC_ID}.metadata", 0, 0),
+        (PDF_HASH, f"{DOC_ID}.pdf", 0, 0),
+        (content_hash, f"{DOC_ID}.content", 0, 0),
+    ]
+    rm_hashes = {pid: f"rm-hash-{pid}" for pid in annotated_page_ids}
+    entries += [(h, f"{DOC_ID}/{pid}.rm", 0, 0) for pid, h in rm_hashes.items()]
+
+    session.add(
+        "GET",
+        f"{RAW_HOST}/sync/v4/root",
+        payload={"hash": ROOT_HASH, "generation": 1, "schemaVersion": 3},
+    )
+    session.add(
+        "GET",
+        f"{RAW_HOST}/sync/v3/files/{ROOT_HASH}",
+        body=_index_text([(DOC_HASH, DOC_ID, 3, 0)]),
+    )
+    session.add(
+        "GET", f"{RAW_HOST}/sync/v3/files/{DOC_HASH}", body=_index_text(entries), repeat=True
+    )
+    session.add(
+        "GET",
+        f"{RAW_HOST}/sync/v3/files/{META_HASH}",
+        payload={
+            "visibleName": "MyDoc",
+            "parent": "",
+            "type": "DocumentType",
+            "lastModified": "0",
+            "pinned": False,
+        },
+    )
+    session.add("GET", f"{RAW_HOST}/sync/v3/files/{PDF_HASH}", body=pdf_bytes)
+    session.add(
+        "GET",
+        f"{RAW_HOST}/sync/v3/files/{content_hash}",
+        payload={"cPages": {"pages": [{"id": pid} for pid in page_ids]}},
+    )
+    for h in rm_hashes.values():
+        session.add("GET", f"{RAW_HOST}/sync/v3/files/{h}", body=_highlighter_stroke_page())
+
+
+async def test_download_pdf_merges_pen_annotations_onto_pdf_page(
+    session: FakeSession, tmp_path: Path
+):
+    """A page the user marked up with the pen gets its `.rm` strokes merged into the PDF."""
+    base_pdf = _one_page_pdf()
+    await _setup_pdf_with_content(
+        session, page_ids=["page-uuid"], annotated_page_ids={"page-uuid"}, pdf_bytes=base_pdf
+    )
+
+    client = make_client(session, ["usertoken"])
+    dest = tmp_path / "out.pdf"
+    result = await client.download_pdf("/MyDoc", dest)
+
+    assert result == dest
+    merged = dest.read_bytes()
+    assert merged != base_pdf
+    assert len(pypdf.PdfReader(io.BytesIO(merged)).pages) == len(
+        pypdf.PdfReader(io.BytesIO(base_pdf)).pages
+    )
+
+
+async def test_download_pdf_leaves_unannotated_page_untouched(
+    session: FakeSession, tmp_path: Path
+):
+    """A page with a `.content` entry but no `.rm` file (never marked up) downloads unchanged."""
+    base_pdf = _one_page_pdf()
+    await _setup_pdf_with_content(
+        session, page_ids=["page-uuid"], annotated_page_ids=set(), pdf_bytes=base_pdf
+    )
+
+    client = make_client(session, ["usertoken"])
+    dest = tmp_path / "out.pdf"
+    result = await client.download_pdf("/MyDoc", dest)
+
+    assert result == dest
+    assert dest.read_bytes() == base_pdf

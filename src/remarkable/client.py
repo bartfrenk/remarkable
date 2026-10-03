@@ -11,7 +11,9 @@ from types import TracebackType
 from typing import Literal, Self, final
 
 import aiohttp
+import pypdf
 import rmscene
+from pypdf.generic import RectangleObject
 from reportlab.graphics import renderPDF
 from reportlab.graphics.shapes import Drawing
 from reportlab.pdfgen import canvas as pdfcanvas
@@ -195,10 +197,11 @@ class RemarkableClient:
     ) -> Path:
         """Download a document.
 
-        With no `fmt`, downloads in its native format: PDF/EPUB as-is, native
-        notebooks as a `.rmdoc` archive (see `download_notebook`). `fmt="pdf"`
-        always returns a PDF (see `download_pdf`). `fmt="rm"` always returns
-        the raw `.rmdoc` archive (see `download_notebook`), but raises
+        With no `fmt`, downloads in its native format: PDF (with any pen
+        annotations merged onto the page) or EPUB as-is, native notebooks as
+        a `.rmdoc` archive (see `download_notebook`). `fmt="pdf"` always
+        returns a PDF (see `download_pdf`). `fmt="rm"` always returns the raw
+        `.rmdoc` archive (see `download_notebook`), but raises
         `UnsupportedFormatError` for documents that already have a PDF or
         EPUB payload, since there's no raw notebook form for those.
         """
@@ -214,6 +217,8 @@ class RemarkableClient:
             part = _find_part(parts, ext)
             if part is not None:
                 data = await self.api.get_bytes(part.id, part.hash)
+                if ext == "pdf":
+                    data = await self._overlay_annotations(entry.id, parts, data)
                 return self._write(path, entry, data, ext, dest)
 
         data = await self._bundle_rmdoc(parts)
@@ -232,15 +237,16 @@ class RemarkableClient:
     async def download_pdf(self, path: str, dest: str | Path | None = None) -> Path:
         """Download a document as PDF.
 
-        Documents with a PDF part download as-is. Native notebooks, which
-        have no PDF payload, are rendered page-by-page from their `.rm`
-        strokes.
+        Documents with a PDF part download with any pen annotations merged
+        onto their page. Native notebooks, which have no PDF payload, are
+        rendered page-by-page from their `.rm` strokes.
         """
         entry = resolve_path(await self.list_documents(), path)
         parts = await self._get_parts(entry)
         part = _find_part(parts, "pdf")
         if part is not None:
             data = await self.api.get_bytes(part.id, part.hash)
+            data = await self._overlay_annotations(entry.id, parts, data)
         else:
             data = await self._render_notebook(entry.id, parts)
         return self._write(path, entry, data, "pdf", dest)
@@ -321,35 +327,38 @@ class RemarkableClient:
             raise DocumentNotFoundError(f"{entry.visible_name!r} is a folder, not a document")
         return await self.api.get_entries(f"{entry.id}.docSchema", entry.hash)
 
-    async def _render_notebook(self, doc_id: str, parts: list[RawEntry]) -> bytes:
-        """Render a native notebook's pages to a single PDF.
+    async def _page_ids(self, parts: list[RawEntry]) -> list[str]:
+        """A document's page ids in reading order, per its `.content` file.
 
-        Reads the page order from `.content` (preferring the modern `cPages`
-        list, falling back to the legacy flat `pages` list, same as
-        rmapi-js's `pageOrder`), then renders each page's `.rm` strokes to
-        SVG via `rmscene`/`rmc` and composites the pages into one PDF with
-        svglib/reportlab. `rmc`'s own PDF export shells out to Inkscape,
-        which we avoid by rendering through reportlab directly.
+        Prefers the modern `cPages` list, falling back to the legacy flat
+        `pages` list, same as rmapi-js's `pageOrder`. Returns an empty list
+        if there's no `.content` part at all -- a PDF/EPUB that's never been
+        opened on the tablet has none.
         """
         content_part = _find_part(parts, "content")
         if content_part is None:
-            raise SyncProtocolError(f"Document {doc_id} has no .content file")
+            return []
         raw_content = await self.api.get_text(content_part.id, content_part.hash)
-        page_ids: list[str]
         try:
             content = json.loads(raw_content)
             c_pages = content.get("cPages")
             if c_pages:
                 # Modern schema: ordered pages, any carrying a "deleted" key are gone.
-                page_ids = [p["id"] for p in c_pages["pages"] if "deleted" not in p]
-            else:
-                # Legacy schema: a flat, already-ordered list of page ids.
-                page_ids = content.get("pages") or []
+                return [p["id"] for p in c_pages["pages"] if "deleted" not in p]
+            # Legacy schema: a flat, already-ordered list of page ids.
+            return content.get("pages") or []
         except (ValueError, KeyError, TypeError) as exc:
-            raise SyncProtocolError(
-                f"Unexpected .content shape for {doc_id}: {raw_content[:300]}"
-            ) from exc
+            raise SyncProtocolError(f"Unexpected .content shape: {raw_content[:300]}") from exc
 
+    async def _render_notebook(self, doc_id: str, parts: list[RawEntry]) -> bytes:
+        """Render a native notebook's pages to a single PDF.
+
+        Renders each page's `.rm` strokes to SVG via `rmscene`/`rmc` and
+        composites the pages into one PDF with svglib/reportlab. `rmc`'s own
+        PDF export shells out to Inkscape, which we avoid by rendering
+        through reportlab directly.
+        """
+        page_ids = await self._page_ids(parts)
         by_id = {part.id: part for part in parts}
         page_parts = [
             by_id[page_file_id]
@@ -361,6 +370,33 @@ class RemarkableClient:
 
         pages = await asyncio.gather(*(self.api.get_bytes(p.id, p.hash) for p in page_parts))
         return await asyncio.to_thread(_render_pdf, pages)
+
+    async def _overlay_annotations(
+        self, doc_id: str, parts: list[RawEntry], pdf_bytes: bytes
+    ) -> bytes:
+        """Merge any handwritten pen annotations onto their PDF page.
+
+        Marking up an imported PDF with the pen adds a `.rm` strokes file
+        per annotated page (keyed by `.content`'s page order) layered on
+        top of -- not replacing -- that page's original content. Pages
+        with no `.rm` file are left untouched, and a document with no
+        annotations at all is returned unchanged.
+        """
+        page_ids = await self._page_ids(parts)
+        by_id = {part.id: part for part in parts}
+        annotated = {
+            i: by_id[file_id]
+            for i, page_id in enumerate(page_ids)
+            if (file_id := f"{doc_id}/{page_id}.rm") in by_id
+        }
+        if not annotated:
+            return pdf_bytes
+
+        strokes = await asyncio.gather(
+            *(self.api.get_bytes(p.id, p.hash) for p in annotated.values())
+        )
+        strokes_by_page = dict(zip(annotated.keys(), strokes))
+        return await asyncio.to_thread(_merge_annotations, pdf_bytes, strokes_by_page)
 
     async def _bundle_rmdoc(self, parts: list[RawEntry]) -> bytes:
         """Zip a document's raw parts into a `.rmdoc` archive.
@@ -391,6 +427,67 @@ def _render_pdf(pages: list[bytes]) -> bytes:
         canvas_.setPageSize((drawing.width, drawing.height))
         renderPDF.draw(drawing, canvas_, 0, 0)
         canvas_.showPage()
+    canvas_.save()
+    return buffer.getvalue()
+
+
+def _merge_annotations(pdf_bytes: bytes, strokes_by_page: dict[int, bytes]) -> bytes:
+    """Overlay rendered pen strokes onto the given 0-indexed PDF pages.
+
+    Strokes are captured in the tablet's fixed screen space
+    (`rmc_svg.PAGE_WIDTH_PT` x `PAGE_HEIGHT_PT`), since the device displays
+    an imported PDF page scaled to fit that screen, letterboxed on
+    whichever axis doesn't match its aspect ratio -- so a page whose shape
+    differs from the screen's has strokes recorded slightly beyond its own
+    edges. Rather than clip those, the page's box is grown symmetrically to
+    the full (inverse-)scaled screen size before merging, same as how
+    reMarkable's own web export avoids cropping out-of-bounds ink.
+    """
+    writer = pypdf.PdfWriter()
+    writer.append(pypdf.PdfReader(io.BytesIO(pdf_bytes)))
+
+    for index, data in strokes_by_page.items():
+        if index >= len(writer.pages):
+            continue
+        base_page = writer.pages[index]
+        box = base_page.mediabox
+        base_width, base_height = float(box.width), float(box.height)
+        scale = max(base_width / rmc_svg.PAGE_WIDTH_PT, base_height / rmc_svg.PAGE_HEIGHT_PT)
+
+        screen_width = rmc_svg.PAGE_WIDTH_PT * scale
+        screen_height = rmc_svg.PAGE_HEIGHT_PT * scale
+        margin_x = (screen_width - base_width) / 2
+        margin_y = (screen_height - base_height) / 2
+        expanded_box = RectangleObject(
+            (
+                float(box.left) - margin_x,
+                float(box.bottom) - margin_y,
+                float(box.right) + margin_x,
+                float(box.top) + margin_y,
+            )
+        )
+        base_page.mediabox = expanded_box
+        base_page.cropbox = expanded_box
+
+        overlay_bytes = _render_overlay_page(_page_drawing(data))
+        overlay_page = pypdf.PdfReader(io.BytesIO(overlay_bytes)).pages[0]
+        base_page.merge_transformed_page(
+            overlay_page,
+            pypdf.Transformation()
+            .scale(scale)
+            .translate(float(box.left) - margin_x, float(box.bottom) - margin_y),
+        )
+
+    buffer = io.BytesIO()
+    writer.write(buffer)
+    return buffer.getvalue()
+
+
+def _render_overlay_page(drawing: Drawing) -> bytes:
+    """Render `drawing` as a single PDF page sized to the tablet's screen."""
+    buffer = io.BytesIO()
+    canvas_ = pdfcanvas.Canvas(buffer, pagesize=(rmc_svg.PAGE_WIDTH_PT, rmc_svg.PAGE_HEIGHT_PT))
+    renderPDF.draw(drawing, canvas_, 0, 0)
     canvas_.save()
     return buffer.getvalue()
 
