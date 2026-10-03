@@ -36,6 +36,12 @@ def main() -> None:
     download.add_argument(
         "-o", "--output", help="Local destination file (default: ./<name>.<ext>)"
     )
+    download.add_argument(
+        "-f",
+        "--format",
+        choices=["rm", "pdf"],
+        help="Output format for notebooks (default: rm)",
+    )
 
     delete = sub.add_parser("delete", help="Move documents or folders to the trash")
     delete.add_argument("paths", nargs="+", help="reMarkable path(s), e.g. /Notes/MyDoc")
@@ -71,7 +77,7 @@ async def _run(args: argparse.Namespace) -> None:
                 verb = "Replaced" if result.trashed_ids else "Uploaded"
                 print(f"{verb} {f} -> document {result.doc_id}")
         elif args.command == "download":
-            dest = await client.download(args.path, args.output)
+            dest = await client.download(args.path, args.output, fmt=args.format)
             print(f"Downloaded {args.path} -> {dest}")
         elif args.command == "delete":
             for path in args.paths:

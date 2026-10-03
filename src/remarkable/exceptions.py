@@ -29,3 +29,7 @@ class GenerationConflictError(SyncProtocolError):
 
 class DocumentNotFoundError(RemarkableError):
     """Raised when a requested path doesn't resolve to a usable document or folder."""
+
+
+class UnsupportedFormatError(RemarkableError):
+    """Raised when a requested download format doesn't apply to the document's kind."""
