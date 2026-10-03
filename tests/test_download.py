@@ -2,8 +2,10 @@ import io
 import zipfile
 from pathlib import Path
 
+import pytest
 import rmscene
 
+from remarkable.exceptions import UnsupportedFormatError
 from remarkable.sync import RAW_HOST
 from tests.conftest import FakeSession, make_client
 
@@ -284,3 +286,161 @@ async def test_download_pdf_renders_native_notebook(session: FakeSession, tmp_pa
 
     page_request = next(r for r in session.requests if r.url.endswith(f"/{page_hash}"))
     assert page_request.headers["rm-filename"] == page_rm_id
+
+
+async def test_download_format_rm_bundles_notebook(session: FakeSession, tmp_path: Path):
+    """`download(..., fmt="rm")` on a notebook bundles its raw parts as `.rmdoc`."""
+    content_hash, pagedata_hash, page_hash = "content-hash", "pagedata-hash", "page-hash"
+    page_id = f"{DOC_ID}/page-uuid.rm"
+
+    session.add(
+        "GET",
+        f"{RAW_HOST}/sync/v4/root",
+        payload={"hash": ROOT_HASH, "generation": 1, "schemaVersion": 3},
+        repeat=True,
+    )
+    session.add(
+        "GET",
+        f"{RAW_HOST}/sync/v3/files/{ROOT_HASH}",
+        body=_index_text([(DOC_HASH, DOC_ID, 4, 0)]),
+        repeat=True,
+    )
+    session.add(
+        "GET",
+        f"{RAW_HOST}/sync/v3/files/{DOC_HASH}",
+        body=_index_text(
+            [
+                (META_HASH, f"{DOC_ID}.metadata", 0, 0),
+                (content_hash, f"{DOC_ID}.content", 0, 0),
+                (pagedata_hash, f"{DOC_ID}.pagedata", 0, 0),
+                (page_hash, page_id, 0, 0),
+            ]
+        ),
+        repeat=True,
+    )
+    session.add(
+        "GET",
+        f"{RAW_HOST}/sync/v3/files/{META_HASH}",
+        payload={
+            "visibleName": "MyNotebook",
+            "parent": "",
+            "type": "DocumentType",
+            "lastModified": "0",
+            "pinned": False,
+        },
+        repeat=True,
+    )
+    session.add("GET", f"{RAW_HOST}/sync/v3/files/{content_hash}", body=b'{"pages": []}')
+    session.add("GET", f"{RAW_HOST}/sync/v3/files/{pagedata_hash}", body=b"Blank\n")
+    session.add("GET", f"{RAW_HOST}/sync/v3/files/{page_hash}", body=b"reMarkable .lines file")
+
+    client = make_client(session, ["usertoken"])
+    dest = tmp_path / "out.rmdoc"
+    result = await client.download("/MyNotebook", dest, fmt="rm")
+
+    assert result == dest
+    with zipfile.ZipFile(dest) as archive:
+        assert archive.read(page_id) == b"reMarkable .lines file"
+
+
+async def test_download_format_pdf_renders_notebook(session: FakeSession, tmp_path: Path):
+    """`download(..., fmt="pdf")` on a notebook renders its `.rm` pages into a real PDF."""
+    page_blocks = list(
+        rmscene.simple_text_document("Buy milk")  # pyright: ignore[reportUnknownMemberType]
+    )
+    page_buffer = io.BytesIO()
+    rmscene.write_blocks(page_buffer, page_blocks)  # pyright: ignore[reportUnknownMemberType]
+    page_bytes = page_buffer.getvalue()
+
+    content_hash, page_hash = "content-hash", "page-hash"
+    page_rm_id = f"{DOC_ID}/page-uuid.rm"
+
+    session.add(
+        "GET",
+        f"{RAW_HOST}/sync/v4/root",
+        payload={"hash": ROOT_HASH, "generation": 1, "schemaVersion": 3},
+    )
+    session.add(
+        "GET",
+        f"{RAW_HOST}/sync/v3/files/{ROOT_HASH}",
+        body=_index_text([(DOC_HASH, DOC_ID, 3, 0)]),
+    )
+    session.add(
+        "GET",
+        f"{RAW_HOST}/sync/v3/files/{DOC_HASH}",
+        body=_index_text(
+            [
+                (META_HASH, f"{DOC_ID}.metadata", 0, 0),
+                (content_hash, f"{DOC_ID}.content", 0, 0),
+                (page_hash, page_rm_id, 0, 0),
+            ]
+        ),
+        repeat=True,
+    )
+    session.add(
+        "GET",
+        f"{RAW_HOST}/sync/v3/files/{META_HASH}",
+        payload={
+            "visibleName": "MyNotebook",
+            "parent": "",
+            "type": "DocumentType",
+            "lastModified": "0",
+            "pinned": False,
+        },
+    )
+    session.add(
+        "GET",
+        f"{RAW_HOST}/sync/v3/files/{content_hash}",
+        payload={"cPages": {"pages": [{"id": "page-uuid"}]}},
+    )
+    session.add("GET", f"{RAW_HOST}/sync/v3/files/{page_hash}", body=page_bytes)
+
+    client = make_client(session, ["usertoken"])
+    dest = tmp_path / "out.pdf"
+    result = await client.download("/MyNotebook", dest, fmt="pdf")
+
+    assert result == dest
+    assert dest.read_bytes().startswith(b"%PDF-")
+
+
+async def test_download_format_rm_fails_for_pdf_document(session: FakeSession, tmp_path: Path):
+    """`download(..., fmt="rm")` on a PDF document fails with a helpful error."""
+    session.add(
+        "GET",
+        f"{RAW_HOST}/sync/v4/root",
+        payload={"hash": ROOT_HASH, "generation": 1, "schemaVersion": 3},
+    )
+    session.add(
+        "GET",
+        f"{RAW_HOST}/sync/v3/files/{ROOT_HASH}",
+        body=_index_text([(DOC_HASH, DOC_ID, 3, 0)]),
+    )
+    session.add(
+        "GET",
+        f"{RAW_HOST}/sync/v3/files/{DOC_HASH}",
+        body=_index_text(
+            [
+                (META_HASH, f"{DOC_ID}.metadata", 0, 0),
+                (PDF_HASH, f"{DOC_ID}.pdf", 0, 0),
+            ]
+        ),
+        repeat=True,
+    )
+    session.add(
+        "GET",
+        f"{RAW_HOST}/sync/v3/files/{META_HASH}",
+        payload={
+            "visibleName": "MyDoc",
+            "parent": "",
+            "type": "DocumentType",
+            "lastModified": "0",
+            "pinned": False,
+        },
+    )
+
+    client = make_client(session, ["usertoken"])
+    dest = tmp_path / "out.rmdoc"
+    with pytest.raises(UnsupportedFormatError, match="PDF"):
+        await client.download("/MyDoc", dest, fmt="rm")
+
+    assert not dest.exists()

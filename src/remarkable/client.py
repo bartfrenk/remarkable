@@ -23,6 +23,7 @@ from remarkable.exceptions import (
     DocumentNotFoundError,
     GenerationConflictError,
     SyncProtocolError,
+    UnsupportedFormatError,
 )
 from remarkable.sync import ROOT_ID, RawEntry, SyncApi
 
@@ -31,6 +32,7 @@ log = logging.getLogger(__name__)
 
 MimeType = Literal["application/pdf", "application/epub+zip"]
 EntryType = Literal["DocumentType", "CollectionType", "TemplateType"]
+Format = Literal["pdf", "rm"]
 
 # Caps concurrent connections when the client creates its own session, so
 # walking a large library doesn't open hundreds of requests at once.
@@ -181,13 +183,24 @@ class RemarkableClient:
                 f"Unexpected metadata shape for {root_entry.id}: {raw_meta[:300]}"
             ) from exc
 
-    async def download(self, path: str, dest: str | Path | None = None) -> Path:
-        """Download a document, keeping its native format.
+    async def download(
+        self, path: str, dest: str | Path | None = None, fmt: Format | None = None
+    ) -> Path:
+        """Download a document.
 
-        PDF and EPUB documents download as-is. Native notebooks, which have
-        no rendered payload, download as a `.rmdoc` archive (see
-        `download_notebook`).
+        With no `fmt`, downloads in its native format: PDF/EPUB as-is, native
+        notebooks as a `.rmdoc` archive (see `download_notebook`). `fmt="pdf"`
+        always returns a PDF (see `download_pdf`). `fmt="rm"` always returns
+        the raw `.rmdoc` archive (see `download_notebook`), but raises
+        `UnsupportedFormatError` for documents that already have a PDF or
+        EPUB payload, since there's no raw notebook form for those.
         """
+        if fmt == "pdf":
+            return await self.download_pdf(path, dest)
+        if fmt == "rm":
+            await self._require_notebook(path)
+            return await self.download_notebook(path, dest)
+
         entry = resolve_path(await self.list_documents(), path)
         parts = await self._get_parts(entry)
         for ext in ("pdf", "epub"):
@@ -198,6 +211,16 @@ class RemarkableClient:
 
         data = await self._bundle_rmdoc(parts)
         return self._write(path, entry, data, "rmdoc", dest)
+
+    async def _require_notebook(self, path: str) -> None:
+        entry = resolve_path(await self.list_documents(), path)
+        parts = await self._get_parts(entry)
+        for ext in ("pdf", "epub"):
+            if _find_part(parts, ext) is not None:
+                raise UnsupportedFormatError(
+                    f"{path!r} is a {ext.upper()} document; only format 'pdf' is "
+                    "supported for it, not 'rm'"
+                )
 
     async def download_pdf(self, path: str, dest: str | Path | None = None) -> Path:
         """Download a document as PDF.
