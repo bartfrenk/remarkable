@@ -34,8 +34,8 @@ async with RemarkableClient() as client:
     await client.delete("/Notes/MyDoc")
 ```
 
-Uploads go to the root folder unless `--folder` is given. Only PDF and EPUB documents can be downloaded,
-not handwritten notebooks.
+Uploads go to the root folder unless `--folder` is given. PDF and EPUB documents download as-is; native
+notebooks (no PDF/EPUB payload) download as a `.rmdoc` archive, reMarkable's own backup format.
 
 ## Troubleshooting
 

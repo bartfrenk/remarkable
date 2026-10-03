@@ -1,3 +1,4 @@
+import zipfile
 from pathlib import Path
 
 from remarkable.sync import RAW_HOST
@@ -64,3 +65,62 @@ async def test_download_resolves_path_and_writes_pdf_bytes(session: FakeSession,
 
     pdf_request = next(r for r in session.requests if r.url.endswith(f"/{PDF_HASH}"))
     assert pdf_request.headers["rm-filename"] == f"{DOC_ID}.pdf"
+
+
+async def test_download_bundles_native_notebook_as_rmdoc(session: FakeSession, tmp_path: Path):
+    """A notebook has no PDF/EPUB part; it should download as a `.rmdoc` zip of its raw parts."""
+    content_hash, pagedata_hash, page_hash = "content-hash", "pagedata-hash", "page-hash"
+    page_id = f"{DOC_ID}/page-uuid.rm"
+
+    session.add(
+        "GET",
+        f"{RAW_HOST}/sync/v4/root",
+        payload={"hash": ROOT_HASH, "generation": 1, "schemaVersion": 3},
+    )
+    session.add(
+        "GET",
+        f"{RAW_HOST}/sync/v3/files/{ROOT_HASH}",
+        body=_index_text([(DOC_HASH, DOC_ID, 4, 0)]),
+    )
+    session.add(
+        "GET",
+        f"{RAW_HOST}/sync/v3/files/{DOC_HASH}",
+        body=_index_text(
+            [
+                (META_HASH, f"{DOC_ID}.metadata", 0, 0),
+                (content_hash, f"{DOC_ID}.content", 0, 0),
+                (pagedata_hash, f"{DOC_ID}.pagedata", 0, 0),
+                (page_hash, page_id, 0, 0),
+            ]
+        ),
+        repeat=True,
+    )
+    session.add(
+        "GET",
+        f"{RAW_HOST}/sync/v3/files/{META_HASH}",
+        payload={
+            "visibleName": "MyNotebook",
+            "parent": "",
+            "type": "DocumentType",
+            "lastModified": "0",
+            "pinned": False,
+        },
+        repeat=True,
+    )
+    session.add("GET", f"{RAW_HOST}/sync/v3/files/{content_hash}", body=b'{"pages": []}')
+    session.add("GET", f"{RAW_HOST}/sync/v3/files/{pagedata_hash}", body=b"Blank\n")
+    session.add("GET", f"{RAW_HOST}/sync/v3/files/{page_hash}", body=b"reMarkable .lines file")
+
+    client = make_client(session, ["usertoken"])
+    dest = tmp_path / "out.rmdoc"
+    result = await client.download("/MyNotebook", dest)
+
+    assert result == dest
+    with zipfile.ZipFile(dest) as archive:
+        assert set(archive.namelist()) == {
+            f"{DOC_ID}.metadata",
+            f"{DOC_ID}.content",
+            f"{DOC_ID}.pagedata",
+            page_id,
+        }
+        assert archive.read(page_id) == b"reMarkable .lines file"

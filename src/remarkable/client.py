@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import logging
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
@@ -243,10 +245,22 @@ class RemarkableClient:
             if part is not None:
                 return await self.api.get_bytes(part.id, part.hash), ext
 
-        raise DocumentNotFoundError(
-            f"{entry.visible_name!r} has no downloadable PDF/EPUB content "
-            "(native notebooks aren't supported)"
-        )
+        return await self._bundle_rmdoc(parts), "rmdoc"
+
+    async def _bundle_rmdoc(self, parts: list[RawEntry]) -> bytes:
+        """Zip a document's raw parts into a `.rmdoc` archive.
+
+        Used for native notebooks, which have no rendered PDF/EPUB payload to
+        download directly. `.rmdoc` is reMarkable's own backup/archive format:
+        a zip of the document's `.content`, `.metadata`, `.pagedata` and
+        per-page `.rm` files, keyed by the same ids used on the sync API.
+        """
+        contents = await asyncio.gather(*(self.api.get_bytes(p.id, p.hash) for p in parts))
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            for part, data in zip(parts, contents):
+                archive.writestr(part.id, data)
+        return buffer.getvalue()
 
 
 def resolve_path(entries: list[DocumentEntry], path: str) -> DocumentEntry:
